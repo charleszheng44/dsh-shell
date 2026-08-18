@@ -645,7 +645,9 @@ export function headerText(state: AppState): string {
     ? 'All sessions'
     : state.selectedProject === undefined
       ? 'no project'
-      : state.projects.find((project) => project.key === state.selectedProject)?.title ?? 'unknown'
+      : terminalSafeText(state.projects.find((project) => project.key === state.selectedProject)?.title ?? 'unknown')
+        .replace(/\s+/g, ' ')
+        .trim()
   const notice = state.notice === undefined ? '' : ` · ${terminalSafeText(state.notice).replace(/\s+/g, ' ').trim()}`
   return terminalSafeText(`${projectTitle} / ${sessionTitle} / ${state.connection}${notice}`)
 }

@@ -375,16 +375,21 @@ export class App {
     if (frame.event.type === 'turn/end') void this.refreshStats()
   }
 
+  /** Monotonic token so an older in-flight stats refresh can never overwrite
+   *  a newer one (rapid turn/ends fire overlapping listSessions calls). */
+  private statsRefreshSeq = 0
+
   /** Re-snapshot the attached session's footer stats after a live turn/end.
    *  Failures are silent: the previous snapshot stays, and a superseded
-   *  attachment or a disconnect discards the late result. */
+   *  attachment, a newer refresh, or a disconnect discards the late result. */
   private async refreshStats(): Promise<void> {
     const attachment = this.state.attachment
     if (this.closed || this.state.connection !== 'connected' || attachment.phase !== 'attached') return
     const sessionId = attachment.sessionId
     const generation = attachment.generation
+    const seq = ++this.statsRefreshSeq
     const result = await this.port.listSessions(this.signal)
-    if (this.closed || this.state.connection !== 'connected') return
+    if (this.closed || this.state.connection !== 'connected' || seq !== this.statsRefreshSeq) return
     const current = this.state.attachment
     if (current.phase !== 'attached' || current.sessionId !== sessionId || current.generation !== generation) return
     if (!result.ok) return

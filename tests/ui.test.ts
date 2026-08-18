@@ -258,6 +258,17 @@ test('headerText shows project, session, connection, and the notice', () => {
   const text = headerText(state)
   assert.ok(text.includes('proj / no session / connected'))
   assert.ok(text.includes('Session no longer exists'))
+  // A project (workspace) title cannot wrap the header row either.
+  const wrappedProject = {
+    connection: 'connected',
+    projects: [{ key: 'w1', title: 'multi\nline project' }],
+    sessions: [],
+    selectedProject: 'w1',
+    attachment: { phase: 'none' },
+    notice: undefined,
+  } as never
+  assert.ok(!headerText(wrappedProject).includes('\n'))
+  assert.ok(headerText(wrappedProject).includes('multi line project'))
   // An attached session shows its picker title (not the raw id).
   const attached = {
     connection: 'connected',
