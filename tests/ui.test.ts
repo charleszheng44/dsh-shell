@@ -692,6 +692,20 @@ test('PickerFrame budgets a styled title by visible width', () => {
   const narrow = styled.render(14)
   assert.ok(!narrow[0]?.includes('\x1b['), narrow[0])
   assert.ok(narrow[0]?.endsWith('┐'), narrow[0])
+  // CJK titles are budgeted by visible width: the border still spans the
+  // full frame (a JS char count would overflow it).
+  const panel = (text: string): string => `\x1b[48;5;236m${text}\x1b[49m`
+  const cjk = new PickerFrame('选择会话', identity)
+  const cjkLine = cjk.render(40)[0] ?? ''
+  assert.equal(cjkLine.endsWith('┐'), true)
+  assert.ok(cjkLine.endsWith('─┐'), cjkLine)
+  // A child row carrying a full reset (pi's truncation) keeps the panel
+  // background through its padding and border.
+  const truncated = new PickerFrame('x', panel)
+  truncated.addChild({ render: () => ['\x1b[1mvery long label\x1b[0m'] } as never)
+  const row = truncated.render(20)[1] ?? ''
+  assert.ok(row.startsWith('\x1b[48;5;236m│ '), row)
+  assert.ok(!row.replace(/\x1b\[48;5;236m/g, '').includes('\x1b[0m'), 'no live full reset in the row')
 })
 
 test('PickerFrame renders a titled border around its children', () => {
