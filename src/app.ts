@@ -34,6 +34,16 @@ export interface SessionRow {
   title: string
 }
 
+/** Usage snapshot shown in the footer while attached (pi-style stats). */
+export interface SessionStats {
+  uncachedInputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+  cacheWriteTokens: number
+  contextWindow: number
+  pressureTokens: number
+}
+
 /**
  * Attachment lifecycle. `buffered` collects stream frames while history is
  * loading (PR 3); PR 2 fills it with nothing and attaches from history alone.
@@ -43,12 +53,14 @@ export type AttachmentState =
   | {
       phase: 'loading'
       sessionId: SessionId
+      title: string
       generation: number
       buffered: SessionEvent[]
     }
   | {
       phase: 'attached'
       sessionId: SessionId
+      title: string
       generation: number
       lastSeq: number
       transcript: readonly TranscriptRow[]
@@ -59,6 +71,8 @@ export type AttachmentState =
       /** The open turn's number on this attachment; the view shows the Deep
        *  diving status while a turn is running. */
       turnActive: number | undefined
+      /** Token/context snapshot from the session list, for the footer. */
+      stats: SessionStats | undefined
     }
 
 /** Complete UI state, rendered by the view on every change. */
@@ -132,6 +146,40 @@ export function sessionTitle(session: SessionSummary): string {
     if (name !== '' && name !== '/') return name
   }
   return session.sessionId
+}
+
+/** Footer stats from the session list snapshot; undefined when the host
+ *  projection lacks token or context numbers. */
+export function summaryStats(session: SessionSummary | undefined): SessionStats | undefined {
+  if (session === undefined) return undefined
+  const values = session.projections?.values
+  if (values === undefined) return undefined
+  // The published projection map does not type host-registered keys beyond
+  // the title; read token/context numbers structurally.
+  const projected = values as unknown as {
+    tokenUsage?: { uncachedInputTokens?: unknown; outputTokens?: unknown; cacheReadTokens?: unknown; cacheWriteTokens?: unknown }
+    contextPressure?: { pressureTokens?: unknown; contextWindow?: unknown }
+  }
+  const usage = projected.tokenUsage
+  const pressure = projected.contextPressure
+  const number = (value: unknown): number | undefined => (typeof value === 'number' && Number.isFinite(value) ? value : undefined)
+  const uncachedInputTokens = number(usage?.uncachedInputTokens)
+  const outputTokens = number(usage?.outputTokens)
+  const cacheReadTokens = number(usage?.cacheReadTokens)
+  const cacheWriteTokens = number(usage?.cacheWriteTokens)
+  const pressureTokens = number(pressure?.pressureTokens)
+  const contextWindow = number(pressure?.contextWindow)
+  if (uncachedInputTokens === undefined || outputTokens === undefined || pressureTokens === undefined || contextWindow === undefined) {
+    return undefined
+  }
+  return {
+    uncachedInputTokens,
+    outputTokens,
+    cacheReadTokens: cacheReadTokens ?? 0,
+    cacheWriteTokens: cacheWriteTokens ?? 0,
+    pressureTokens,
+    contextWindow,
+  }
 }
 
 const emptyAttachment: AttachmentState = { phase: 'none' }
@@ -412,8 +460,14 @@ export class App {
     this.view.closePicker()
     const generation = ++this.generation
     this.pendingAccepted = undefined
+    // The header shows the picker's title (falling back to the id), and the
+    // footer shows the token/context snapshot from the session list.
+    const summary = this.rowsCache.sessions.find((candidate) => candidate.sessionId === sessionId)
+    const title = this.state.sessions.find((candidate) => candidate.sessionId === sessionId)?.title
+      ?? String(sessionId)
+    const stats = summaryStats(summary)
     this.setState({
-      attachment: { phase: 'loading', sessionId, generation, buffered: [] },
+      attachment: { phase: 'loading', sessionId, title, generation, buffered: [] },
     })
     const history = await this.port.loadHistory(sessionId, this.signal)
     // A newer attachment started while we were loading: ignore this result.
@@ -486,6 +540,7 @@ export class App {
       attachment: {
         phase: 'attached',
         sessionId,
+        title,
         generation,
         lastSeq,
         transcript,
@@ -493,6 +548,7 @@ export class App {
         sending: false,
         pendingTools,
         turnActive,
+        stats,
       },
       notice: undefined,
     })

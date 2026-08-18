@@ -30,12 +30,14 @@ import type { AppState, AppView, ProjectRow, SessionRow, SubmitResult } from './
 import { partialSegments, type AssistantSegment, type TranscriptRow } from './transcript.js'
 import {
   assistantMarker,
+  contextStyle,
   editorTheme,
   footerStyle,
   headerStyle,
   markdownTheme,
   pickerPanelStyle,
   toolBoxBg,
+  toolErrorBoxBg,
   toolOutputStyle,
   toolResultBoxBg,
   toolTitleStyle,
@@ -281,7 +283,7 @@ function rowComponent(row: TranscriptRow): Component {
     return box
   }
   if (row.kind === 'toolResult') {
-    const box = new Box(1, 1, toolResultBoxBg)
+    const box = new Box(1, 1, row.error ? toolErrorBoxBg : toolResultBoxBg)
     box.addChild(new Text(toolOutputStyle(terminalSafeText(toolPreviewText(row.output, row.truncated))), 0, 0))
     return box
   }
@@ -321,10 +323,15 @@ export class TerminalView implements AppView {
     { component: new Text(assistantMarker(), 0, 0), basis: 3, grow: 0 },
     { component: this.partial, basis: 'auto', grow: 1 },
   ])
-  private readonly header = new Text('', 1, 0)
-  /** "Deep diving..." turn-status line; an empty Text renders zero rows, so
-   *  the layout keeps its slot without stealing a line while idle. */
+  /** "Deep diving..." turn-status line, rendered at the tail of the transcript
+   *  (where the answer will stream in), like the Web UI's turn status. Empty
+   *  Texts render zero rows, so idle layouts keep no slot. */
   private readonly working = new Text('', 0, 0)
+  /** First-run hint while no session is attached. */
+  private readonly hint = new Text('', 1, 0)
+  private readonly header = new Text('', 1, 0)
+  /** pi-style usage/context line above the footer hints. */
+  private readonly stats = new Text('', 1, 0)
   private readonly editor = new Editor(this.tui, editorTheme, { paddingX: 1 })
   private overlay: OverlayHandle | undefined
 
@@ -335,11 +342,19 @@ export class TerminalView implements AppView {
     private readonly onSubmit: (text: string) => Promise<SubmitResult>,
   ) {
     this.editor.disableSubmit = true
-    const footer = new Text(
-      footerStyle('Ctrl+P project  Ctrl+S session  Ctrl+C quit\nApprovals and questions: use Web UI'),
-      1,
-      0,
-    )
+    const footer = new VStack([
+      // pi-style usage/context line; empty (zero rows) when unattached.
+      { component: this.stats, basis: 'auto', grow: 0 },
+      {
+        component: new Text(
+          footerStyle('Ctrl+P project  Ctrl+S session  Ctrl+C quit\nEnter send · ↑ history · Approvals and questions: use Web UI'),
+          1,
+          0,
+        ),
+        basis: 'auto',
+        grow: 0,
+      },
+    ])
     const scroll = new ScrollView(this.transcript, {
       follow: 'end',
       primary: true,
@@ -352,7 +367,6 @@ export class TerminalView implements AppView {
     this.tui.setLayoutRoot(
       new VStack([
         { component: this.header, basis: 'auto', grow: 0, minSize: 1 },
-        { component: this.working, basis: 'auto', grow: 0 },
         { component: scroll, basis: 0, grow: 1, minSize: 1 },
         { component: editorRow, basis: 'auto', grow: 0, minSize: 1 },
       ]),
@@ -414,18 +428,6 @@ export class TerminalView implements AppView {
 
   render(state: AppState): void {
     this.header.setText(headerStyle(headerText(state)))
-    this.renderTranscript(state.attachment)
-    const policy = editorPolicy(state, this.overlay !== undefined)
-    this.editorEnabled = policy.enabled
-    this.editor.disableSubmit = policy.disableSubmit
-    if (policy.clearText) {
-      this.editor.setText('')
-      // A disconnect or detach while a picker is open must not rip focus
-      // from the SelectList (mirrors the focus-to-editor guard below).
-      if (this.overlay === undefined) this.tui.setFocus(null)
-    } else if (policy.focusEditor) {
-      this.tui.setFocus(this.editor)
-    }
     this.workingActive = isWorking(state)
     if (this.workingActive && this.workingTimer === undefined) {
       this.workingTimer = setInterval(() => {
@@ -439,6 +441,19 @@ export class TerminalView implements AppView {
       this.workingDots = 0 // next working period starts from a clean frame
     }
     this.working.setText(this.workingActive ? workingStyle(deepDivingText(this.workingDots)) : '')
+    this.stats.setText(statsText(state.attachment))
+    this.renderTranscript(state.attachment)
+    const policy = editorPolicy(state, this.overlay !== undefined)
+    this.editorEnabled = policy.enabled
+    this.editor.disableSubmit = policy.disableSubmit
+    if (policy.clearText) {
+      this.editor.setText('')
+      // A disconnect or detach while a picker is open must not rip focus
+      // from the SelectList (mirrors the focus-to-editor guard below).
+      if (this.overlay === undefined) this.tui.setFocus(null)
+    } else if (policy.focusEditor) {
+      this.tui.setFocus(this.editor)
+    }
     this.tui.requestRender()
   }
 
@@ -448,6 +463,18 @@ export class TerminalView implements AppView {
   private renderTranscript(attachment: AppState['attachment']): void {
     const rows = attachment.phase === 'attached' ? attachment.transcript : []
     reconcileRows(this.transcript, this.rowCache, rows)
+    // First-run hint while nothing is attached; removed as soon as any
+    // attachment phase begins.
+    this.transcript.removeChild(this.hint)
+    if (attachment.phase === 'none') {
+      this.hint.setText(footerStyle('Press Ctrl+P to choose a project and session'))
+      this.transcript.addChild(this.hint)
+    }
+    // The Deep diving status sits at the tail of the transcript, above the
+    // in-flight partial, mirroring the Web UI's turn status at the top of
+    // the streaming turn.
+    this.transcript.removeChild(this.working)
+    if (this.workingActive) this.transcript.addChild(this.working)
     // The live partial updates in place (single Markdown component) and stays
     // the last child, after every finalized row; the assistant marker column
     // is added only while there is in-flight content to show.
@@ -604,11 +631,13 @@ export function editorPolicy(
   }
 }
 
-/** Status header: project / session / connection, with the notice appended. */
+/** Status header: project / session / connection, with the notice appended.
+ *  The attached session shows its picker title, falling back to the id when
+ *  the title sanitizes to empty. */
 export function headerText(state: AppState): string {
   const attachment = state.attachment
   const sessionTitle = attachment.phase === 'attached' || attachment.phase === 'loading'
-    ? attachment.sessionId
+    ? terminalSafeText(attachment.title).trim() || String(attachment.sessionId)
     : 'no session'
   const projectTitle = state.selectedProject === 'all'
     ? 'All sessions'
@@ -617,6 +646,28 @@ export function headerText(state: AppState): string {
       : state.projects.find((project) => project.key === state.selectedProject)?.title ?? 'unknown'
   const notice = state.notice === undefined ? '' : ` · ${state.notice}`
   return terminalSafeText(`${projectTitle} / ${sessionTitle} / ${state.connection}${notice}`)
+}
+
+/** Format a token count like pi's footer: 999 -> "999", 1500 -> "1.5k", 42000 -> "42k". */
+export function formatTokens(count: number): string {
+  if (count < 1000) return count.toString()
+  if (count < 10000) return `${(count / 1000).toFixed(1)}k`
+  if (count < 1000000) return `${Math.round(count / 1000)}k`
+  if (count < 10000000) return `${(count / 1000000).toFixed(1)}M`
+  return `${Math.round(count / 1000000)}M`
+}
+
+/** pi-style usage line for the footer: ↑input ↓output R-cache W-cache and the
+ *  context percentage (colored past pi's warning/error thresholds). */
+export function statsText(attachment: AppState['attachment']): string {
+  if (attachment.phase !== 'attached' || attachment.stats === undefined) return ''
+  const { uncachedInputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, pressureTokens, contextWindow } = attachment.stats
+  const percent = contextWindow > 0 ? (pressureTokens / contextWindow) * 100 : 0
+  const cache = (cacheReadTokens > 0 || cacheWriteTokens > 0)
+    ? ` R${formatTokens(cacheReadTokens)}${cacheWriteTokens > 0 ? ` W${formatTokens(cacheWriteTokens)}` : ''}`
+    : ''
+  const context = contextStyle(percent, `${percent.toFixed(1)}%/${formatTokens(contextWindow)}`)
+  return `${footerStyle(`↑${formatTokens(uncachedInputTokens)} ↓${formatTokens(outputTokens)}${cache} `)}${context}`
 }
 
 /** Picker items for a session list: the empty case shows a notice row. */

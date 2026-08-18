@@ -103,6 +103,7 @@ const underline = sgr('4')
 const strikethrough = sgr('9')
 const fgGreen = sgr('32')
 const fgCyan = sgr('36')
+const fgYellow = sgr('33')
 const boldCyan = sgr('1;36')
 const dimRed = sgr('2;31')
 
@@ -146,6 +147,13 @@ export function footerStyle(text: string): string {
   return dim(text)
 }
 
+/** Context-usage coloring, mirroring pi's footer: red past 90%, yellow past 70%. */
+export function contextStyle(percent: number, text: string): string {
+  if (percent > 90) return dimRed(text)
+  if (percent > 70) return fgYellow(text)
+  return dim(text)
+}
+
 /** Picker panel background: dark gray, so the overlay separates from the transcript. */
 export const pickerPanelStyle = sgr('48;5;236')
 
@@ -159,6 +167,9 @@ export const toolBoxBg = bgHex('#282832')
 /** Tool result background (pi's toolSuccessBg #283228): a finished result
  *  shifts to the success tint, like the pi coding agent. */
 export const toolResultBoxBg = bgHex('#283228')
+
+/** Failed tool result background (pi's toolErrorBg #3c2828). */
+export const toolErrorBoxBg = bgHex('#3c2828')
 
 /** Tool title: pi renders the tool name bold in the default text color. */
 export const toolTitleStyle = (text: string): string => bold(piText(text))

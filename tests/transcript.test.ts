@@ -341,7 +341,7 @@ test('an unterminated code fence stays visible in the partial', () => {
   assert.deepEqual(partialSegments(state.partial as never), [{ kind: 'text', text: '```ts\nconst x = 1\n' }])
 })
 
-function toolResultEvent(seq: number, callId: string, text: string, opts: { turn?: number; step?: number } = {}): SessionEvent {
+function toolResultEvent(seq: number, callId: string, text: string, opts: { turn?: number; step?: number; isError?: boolean } = {}): SessionEvent {
   return {
     type: 'tool/result',
     seq,
@@ -355,6 +355,7 @@ function toolResultEvent(seq: number, callId: string, text: string, opts: { turn
           type: 'tool-result',
           toolCallId: callId,
           content: [{ type: 'text', text }],
+          isError: opts.isError,
         }],
       },
     },
@@ -393,8 +394,22 @@ test('a tool/result appends a named, bounded output row', () => {
   ])
   assert.deepEqual(state.rows, [
     { kind: 'toolCall', name: 'run_code', args: '{"code":"x"}' },
-    { kind: 'toolResult', name: 'run_code', output: 'line one\nline two\nline three', truncated: false },
+    { kind: 'toolResult', name: 'run_code', output: 'line one\nline two\nline three', truncated: false, error: false },
   ])
+})
+
+test('a failed tool result carries its error flag', () => {
+  const state = projectEvents([
+    assistantMessage(1, 1, 1, [{ type: 'tool-call', id: 'call-1', name: 'bash', arguments: '{}' }]),
+    toolResultEvent(2, 'call-1', 'command not found', { isError: true }),
+  ])
+  const row = state.rows.find((r) => r.kind === 'toolResult')
+  assert.equal(row?.kind, 'toolResult')
+  if (row?.kind === 'toolResult') {
+    assert.equal(row.error, true)
+    assert.equal(row.output, 'command not found')
+    assert.equal(row.truncated, false)
+  }
 })
 
 test('a tool/result for an unknown call is not rendered', () => {

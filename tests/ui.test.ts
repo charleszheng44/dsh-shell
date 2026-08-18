@@ -8,7 +8,7 @@ import { test } from 'node:test'
 
 import { Container, Markdown, getCapabilities, setCapabilities } from '@earendil-works/pi-tui'
 
-import { PickerFrame, assistantMarkdown, deepDivingText, editorPolicy, editorTextAfterSubmit, headerText, isWorking, neutralizeLinks, pickerLabel, reconcileRows, sessionPickerItems, terminalSafeText, toolPreviewText } from '../src/ui.js'
+import { PickerFrame, assistantMarkdown, deepDivingText, editorPolicy, editorTextAfterSubmit, formatTokens, headerText, isWorking, neutralizeLinks, pickerLabel, reconcileRows, sessionPickerItems, statsText, terminalSafeText, toolPreviewText } from '../src/ui.js'
 import type { TranscriptRow } from '../src/transcript.js'
 
 const identity = (text: string): string => text
@@ -257,6 +257,83 @@ test('headerText shows project, session, connection, and the notice', () => {
   const text = headerText(state)
   assert.ok(text.includes('proj / no session / connected'))
   assert.ok(text.includes('Session no longer exists'))
+  // An attached session shows its picker title (not the raw id).
+  const attached = {
+    connection: 'connected',
+    projects: [],
+    sessions: [],
+    selectedProject: 'all',
+    attachment: {
+      phase: 'attached',
+      sessionId: 'session-abc',
+      title: 'verification-ok request',
+      sending: false,
+      turnActive: undefined,
+    },
+    notice: undefined,
+  } as never
+  assert.ok(headerText(attached).includes('All sessions / verification-ok request / connected'))
+  // A title that sanitizes to empty falls back to the session id.
+  const hostile = {
+    connection: 'connected',
+    projects: [],
+    sessions: [],
+    selectedProject: 'all',
+    attachment: {
+      phase: 'attached',
+      sessionId: 'session-abc',
+      title: '\x1b[31m\x1b[0m',
+      sending: false,
+      turnActive: undefined,
+    },
+    notice: undefined,
+  } as never
+  assert.ok(headerText(hostile).includes('session-abc'))
+})
+
+test('formatTokens matches pi footer formatting', () => {
+  assert.equal(formatTokens(999), '999')
+  assert.equal(formatTokens(1500), '1.5k')
+  assert.equal(formatTokens(42000), '42k')
+  assert.equal(formatTokens(1500000), '1.5M')
+  assert.equal(formatTokens(42000000), '42M')
+})
+
+test('statsText renders a pi-style usage line only while attached', () => {
+  assert.equal(statsText({ phase: 'none' } as never), '')
+  assert.equal(statsText({ phase: 'loading', buffered: [] } as never), '')
+  const attached = {
+    phase: 'attached',
+    stats: {
+      uncachedInputTokens: 226206,
+      outputTokens: 142951,
+      cacheReadTokens: 36564224,
+      cacheWriteTokens: 0,
+      pressureTokens: 346771,
+      contextWindow: 1000000,
+    },
+  } as never
+  const text = statsText(attached)
+  assert.ok(text.includes('↑226k'), text)
+  assert.ok(text.includes('↓143k'), text)
+  assert.ok(text.includes('R37M'), text)
+  assert.ok(text.includes('34.7%/1.0M'), text)
+  // No cache numbers -> the R/W segment is omitted.
+  const noCache = {
+    phase: 'attached',
+    stats: {
+      uncachedInputTokens: 100,
+      outputTokens: 50,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      pressureTokens: 500,
+      contextWindow: 1000,
+    },
+  } as never
+  const bare = statsText(noCache)
+  assert.ok(bare.includes('↑100 ↓50'), bare)
+  assert.ok(!bare.includes('R'), bare)
+  assert.ok(bare.includes('50.0%/1.0k'), bare)
 })
 
 test('sessionPickerItems renders a notice row for an empty project', () => {
@@ -294,11 +371,17 @@ test('tool rows render boxed with a background that spans every line', () => {
   const cache: Array<{ row: TranscriptRow; component: unknown }> = []
   const rows = [
     { kind: 'toolCall', name: 'run_code', args: '{"code":"x"}' },
-    { kind: 'toolResult', name: 'run_code', output: 'out\nline two', truncated: false },
+    { kind: 'toolResult', name: 'run_code', output: 'out\nline two', truncated: false, error: false },
+    { kind: 'toolResult', name: 'run_code', output: 'command not found', truncated: false, error: true },
   ] as never
   reconcileRows(container, cache as never, rows)
-  for (const child of container.children) {
-    const lines = (child as { render(width: number): string[] }).render(40)
+  assert.equal(container.children.length, 3)
+  const boxed = container.children.slice(1) as Array<{ render(width: number): string[] }>
+  // The error result uses the error tint; every box line keeps its background.
+  const errorLines = boxed[1]?.render(30) ?? []
+  assert.ok(errorLines[1]?.startsWith('\x1b[48;2;60;40;40m'), 'error box uses the error tint')
+  for (const child of boxed) {
+    const lines = child.render(40)
     assert.ok(lines.length >= 2, 'boxed rows have padding lines')
     for (const line of lines) {
       assert.ok(line.startsWith('\x1b[48;'), `box line starts with a background: ${JSON.stringify(line)}`)

@@ -24,7 +24,7 @@ export type TranscriptRow =
   | { kind: 'user'; text: string }
   | { kind: 'assistant'; segments: readonly AssistantSegment[] }
   | { kind: 'toolCall'; name: string; args?: string }
-  | { kind: 'toolResult'; name: string; output: string; truncated: boolean }
+  | { kind: 'toolResult'; name: string; output: string; truncated: boolean; error: boolean }
 
 /** Per-block-index accumulator inside a partial. */
 export interface PartialBlock {
@@ -206,9 +206,10 @@ export function applyEvent(state: TranscriptState, event: SessionEvent): Transcr
   if (event.type === 'tool/result') {
     // The result of a tool call arrives as its own event; render it as a
     // bounded output row named after the call, matching how the Web UI shows
-    // tool outcomes below the call.
+    // tool outcomes below the call. A failed call carries isError on the
+    // tool-result part and renders with the error tint.
     const message = event.data?.message as
-      | { source?: { callId?: unknown }; content?: readonly { content?: readonly { type?: string; text?: string }[] }[] }
+      | { source?: { callId?: unknown }; content?: readonly { content?: readonly { type?: string; text?: string }[]; isError?: unknown }[] }
       | undefined
     const callId = typeof message?.source?.callId === 'string' ? message.source.callId : undefined
     const text = (message?.content ?? [])
@@ -216,12 +217,13 @@ export function applyEvent(state: TranscriptState, event: SessionEvent): Transcr
       .filter((part) => part.type === 'text' && typeof part.text === 'string')
       .map((part) => part.text ?? '')
       .join('\n')
+    const error = (message?.content ?? []).some((part) => part.isError === true)
     const name = callId === undefined ? undefined : state.pendingTools[callId]
     if (callId === undefined || name === undefined || text === '') return base
     const bounded = truncateOutput(text)
     return {
       ...base,
-      rows: [...state.rows, { kind: 'toolResult', name, output: bounded.text, truncated: bounded.truncated }],
+      rows: [...state.rows, { kind: 'toolResult', name, output: bounded.text, truncated: bounded.truncated, error }],
     }
   }
 

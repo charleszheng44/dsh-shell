@@ -447,7 +447,7 @@ test('live tool/result folds into a named output row after a tool-call message',
     assert.deepEqual(last.attachment.transcript, [
       { kind: 'user', text: 'q' },
       { kind: 'toolCall', name: 'run_code', args: '{"code":"x"}' },
-      { kind: 'toolResult', name: 'run_code', output: 'out', truncated: false },
+      { kind: 'toolResult', name: 'run_code', output: 'out', truncated: false, error: false },
     ])
   }
 })
