@@ -62,11 +62,33 @@ export interface DshPort {
  *  OOM the client with a single giant frame. */
 const MAX_FRAME_BYTES = 4 * 1024 * 1024
 
-/** One unary call folded into the RpcResult error branch on any transport failure. */
-async function unary<T>(call: () => Promise<RpcResponse<T>>): Promise<RpcResult<T>> {
+/** Connection-level fetch errors: a stale keep-alive socket the host closed
+ *  while we idled, or a socket reset mid-request. These are safe to retry
+ *  once — the request never produced a response, and the retry opens a fresh
+ *  connection. */
+function isConnectionError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false
+  const message = error.cause instanceof Error ? error.cause.message : error.message
+  return /ECONNRESET|UND_ERR_SOCKET|ECONNREFUSED|ETIMEDOUT|fetch failed/i.test(message)
+}
+
+/** One unary call folded into the RpcResult error branch on any transport
+ *  failure. Read calls retry once on connection-level errors: the host's HTTP
+ *  server closes keep-alive sockets after a few seconds of idle, so a read
+ *  issued after browsing the picker can land on a stale socket and be reset;
+ *  the retry uses a fresh connection. Prompt (a write) never retries — a
+ *  retried prompt could be admitted twice. */
+async function unary<T>(call: () => Promise<RpcResponse<T>>, retry = false): Promise<RpcResult<T>> {
   try {
     return (await call()).result
   } catch (error) {
+    if (retry && isConnectionError(error)) {
+      try {
+        return (await call()).result
+      } catch (retryError) {
+        return transportError<T>(retryError)
+      }
+    }
     return transportError<T>(error)
   }
 }
@@ -107,10 +129,10 @@ export interface PortClient {
 /** Direct adapter: DshPort over the published client, folding transport errors. */
 export function createDshPort(client: PortClient): DshPort {
   return {
-    describe: (signal) => unary(() => client.host.describe({}, signal)),
-    listWorkspaces: (signal) => unary(() => client.workspace.list({}, signal)),
-    listSessions: (signal) => unary(() => client.sessions.list({}, signal)),
-    loadHistory: (sessionId, signal) => unary(() => client.sessions.history({ sessionId }, signal)),
+    describe: (signal) => unary(() => client.host.describe({}, signal), true),
+    listWorkspaces: (signal) => unary(() => client.workspace.list({}, signal), true),
+    listSessions: (signal) => unary(() => client.sessions.list({}, signal), true),
+    loadHistory: (sessionId, signal) => unary(() => client.sessions.history({ sessionId }, signal), true),
     prompt: (sessionId, text, signal) => unary(() => client.sessions.prompt({
       sessionId,
       mode: 'queue',

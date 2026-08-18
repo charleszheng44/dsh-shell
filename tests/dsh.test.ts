@@ -227,3 +227,62 @@ test('createDshPort.prompt folds transport throws into the error branch', async 
   assert.equal(result.ok, false)
   if (!result.ok) assert.match(result.error.message, /connection lost/)
 })
+
+test('read calls retry once on a stale-socket reset and succeed', async () => {
+  // The host closes idle keep-alive sockets; the first call lands on the
+  // stale socket (ECONNRESET), the retry opens a fresh connection.
+  let calls = 0
+  const client = stubClient({
+    sessions: {
+      history: async () => {
+        calls += 1
+        if (calls === 1) {
+          const error = new Error('fetch failed')
+          error.cause = new Error('read ECONNRESET')
+          throw error
+        }
+        return ok({ events: [], hasMore: false })
+      },
+    },
+  })
+  const port: DshPort = createDshPort(client)
+  const result = await port.loadHistory('s1' as never, undefined)
+  assert.equal(result.ok, true)
+  assert.equal(calls, 2)
+})
+
+test('a non-connection error on a read is not retried', async () => {
+  let calls = 0
+  const client = stubClient({
+    sessions: {
+      history: async () => {
+        calls += 1
+        throw new Error('boom')
+      },
+    },
+  })
+  const port: DshPort = createDshPort(client)
+  const result = await port.loadHistory('s1' as never, undefined)
+  assert.equal(result.ok, false)
+  assert.equal(calls, 1)
+})
+
+test('prompt is never retried on a connection error', async () => {
+  // A retried prompt could be admitted twice, so the write path folds the
+  // error instead of retrying.
+  let calls = 0
+  const client = stubClient({
+    sessions: {
+      prompt: async () => {
+        calls += 1
+        const error = new Error('fetch failed')
+        error.cause = new Error('read ECONNRESET')
+        throw error
+      },
+    },
+  })
+  const port: DshPort = createDshPort(client)
+  const result = await port.prompt('s1' as never, 'hello', undefined)
+  assert.equal(result.ok, false)
+  assert.equal(calls, 1)
+})
