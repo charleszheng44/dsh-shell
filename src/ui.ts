@@ -215,20 +215,8 @@ export class TerminalView implements AppView {
   }
 
   render(state: AppState): void {
-    const attachment = state.attachment
-    const sessionTitle = attachment.phase === 'attached' || attachment.phase === 'loading'
-      ? attachment.sessionId
-      : 'no session'
-    const projectTitle = state.selectedProject === 'all'
-      ? 'All sessions'
-      : state.selectedProject === undefined
-        ? 'no project'
-        : state.projects.find((project) => project.key === state.selectedProject)?.title ?? 'unknown'
-    const notice = state.notice === undefined ? '' : ` · ${state.notice}`
-    this.header.setText(
-      terminalSafeText(`${projectTitle} / ${sessionTitle} / ${state.connection}${notice}`),
-    )
-    this.renderTranscript(attachment)
+    this.header.setText(headerText(state))
+    this.renderTranscript(state.attachment)
     this.editor.disableSubmit = true
     this.tui.requestRender()
   }
@@ -266,19 +254,13 @@ export class TerminalView implements AppView {
   }
 
   openSessionPicker(rows: readonly SessionRow[], onSelect: (row: SessionRow) => void, onCancel: () => void): void {
+    const items = sessionPickerItems(rows)
     if (rows.length === 0) {
       // Design: an empty project remains selectable and shows a notice; it
       // never creates a session, and Enter on the notice just closes.
-      const items: SelectItem[] = [{ value: '', label: 'No attachable sessions' }]
       this.showPicker(items, () => undefined, onCancel)
       return
     }
-    const items: SelectItem[] = rows.map((row) => ({
-      value: String(row.sessionId),
-      // Pi renders label || value; a title that sanitizes to empty must not
-      // fall back to the raw DSH session id.
-      label: pickerLabel(row.title, 'Session'),
-    }))
     this.showPicker(items, (item) => {
       const row = rows.find((candidate) => String(candidate.sessionId) === item.value)
       if (row !== undefined) onSelect(row)
@@ -312,4 +294,33 @@ export class TerminalView implements AppView {
   stop(): void {
     this.tui.stop()
   }
+
+}
+
+/** Status header: project / session / connection, with the notice appended. */
+export function headerText(state: AppState): string {
+  const attachment = state.attachment
+  const sessionTitle = attachment.phase === 'attached' || attachment.phase === 'loading'
+    ? attachment.sessionId
+    : 'no session'
+  const projectTitle = state.selectedProject === 'all'
+    ? 'All sessions'
+    : state.selectedProject === undefined
+      ? 'no project'
+      : state.projects.find((project) => project.key === state.selectedProject)?.title ?? 'unknown'
+  const notice = state.notice === undefined ? '' : ` · ${state.notice}`
+  return terminalSafeText(`${projectTitle} / ${sessionTitle} / ${state.connection}${notice}`)
+}
+
+/** Picker items for a session list: the empty case shows a notice row. */
+export function sessionPickerItems(rows: readonly SessionRow[]): SelectItem[] {
+  if (rows.length === 0) {
+    return [{ value: '', label: 'No attachable sessions' }]
+  }
+  return rows.map((row) => ({
+    value: String(row.sessionId),
+    // Pi renders label || value; a title that sanitizes to empty must not
+    // fall back to the raw DSH session id.
+    label: pickerLabel(row.title, 'Session'),
+  }))
 }

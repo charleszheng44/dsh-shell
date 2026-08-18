@@ -8,7 +8,7 @@ import { test } from 'node:test'
 
 import { Markdown, getCapabilities, setCapabilities } from '@earendil-works/pi-tui'
 
-import { assistantMarkdown, neutralizeLinks, pickerLabel, terminalSafeText } from '../src/ui.js'
+import { assistantMarkdown, headerText, neutralizeLinks, pickerLabel, sessionPickerItems, terminalSafeText } from '../src/ui.js'
 
 const identity = (text: string): string => text
 const markdownTheme = {
@@ -164,4 +164,29 @@ test('tool markers cannot smuggle links into OSC 8', () => {
   } finally {
     setCapabilities(original)
   }
+})
+
+test('headerText shows project, session, connection, and the notice', () => {
+  const state = {
+    connection: 'connected',
+    projects: [{ key: 'w1', title: 'proj' }],
+    sessions: [],
+    selectedProject: 'w1',
+    attachment: { phase: 'none' },
+    notice: 'Session no longer exists',
+  } as never
+  const text = headerText(state)
+  assert.ok(text.includes('proj / no session / connected'))
+  assert.ok(text.includes('Session no longer exists'))
+})
+
+test('sessionPickerItems renders a notice row for an empty project', () => {
+  const items = sessionPickerItems([])
+  assert.deepEqual(items, [{ value: '', label: 'No attachable sessions' }])
+})
+
+test('sessionPickerItems sanitizes titles with a fallback label', () => {
+  const items = sessionPickerItems([{ sessionId: 's1' as never, title: '\x1b[31m\x1b[0m' }])
+  assert.equal(items[0]?.value, 's1')
+  assert.equal(items[0]?.label, 'Session')
 })
