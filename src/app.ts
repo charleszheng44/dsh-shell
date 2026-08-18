@@ -466,6 +466,47 @@ export class App {
     })
   }
 
+  /**
+   * Submit plain text to the attached session. Requires an attached session
+   * on a connected stream, non-blank text, and no in-flight submission;
+   * slash-command input is rejected locally and retained. The original text
+   * is sent unsanitized through session.prompt in queue mode.
+   */
+  async submit(text: string): Promise<SubmitResult> {
+    const attachment = this.state.attachment
+    if (this.closed
+      || this.state.connection !== 'connected'
+      || attachment.phase !== 'attached'
+      || attachment.sending) {
+      return { ok: false, reason: 'not-attached' }
+    }
+    const trimmed = text.trim()
+    if (trimmed === '') return { ok: false, reason: 'blank' }
+    if (trimmed.startsWith('/')) return { ok: false, reason: 'slash-command' }
+    const generation = attachment.generation
+    const sessionId = attachment.sessionId
+    this.setState({ attachment: { ...attachment, sending: true } })
+    const result = await this.port.prompt(sessionId, text, this.signal)
+    // A switch or shutdown while in flight: drop the late result entirely.
+    const current = this.state.attachment
+    if (this.closed
+      || current.phase !== 'attached'
+      || current.generation !== generation
+      || current.sessionId !== sessionId) {
+      return { ok: false, reason: 'stale' }
+    }
+    this.setState({ attachment: { ...current, sending: false } })
+    if (!result.ok) {
+      this.setState({ notice: result.error.message })
+      return { ok: false, reason: 'rejected', error: result.error.message }
+    }
+    // The design doc's prompt-submission flow: show a transient accepted
+    // notice and never append a transcript row (the logged user/message
+    // event on the mux stream renders the prompt itself).
+    this.setState({ notice: 'Accepted by DSH' })
+    return { ok: true }
+  }
+
   /** Idempotent shutdown: stop the view and settle the stream pump. */
   shutdown(): void {
     if (this.closed) return
@@ -490,6 +531,11 @@ export const STREAM_READY_TIMEOUT_MS = 10_000
 /** Upper bound on events buffered while history loads (a history round-trip
  *  needs only the frames between the request and its response). */
 const MAX_BUFFERED_EVENTS = 10_000
+
+/** Submit outcome: accepted, or a reason (with the safe error when rejected). */
+export type SubmitResult =
+  | { ok: true }
+  | { ok: false; reason: 'not-attached' | 'blank' | 'slash-command' | 'stale' | 'rejected'; error?: string }
 
 /** Boot result: success carries the host description; failure carries the safe error. */
 export type RpcBootResult =

@@ -52,6 +52,10 @@ export interface DshPort {
   }>>
   /** Live mux stream: yields stripped MuxFrames once the socket is open. */
   stream(signal: AbortSignal, onOpen: () => void): AsyncIterable<MuxFrame>
+  /** Submit one plain-text prompt to the attached session (queue mode). */
+  prompt(sessionId: SessionId, text: string, signal?: AbortSignal): Promise<RpcResult<{
+    accepted: true
+  }>>
 }
 
 /** Upper bound on one WebSocket message: a hostile host must not be able to
@@ -86,6 +90,14 @@ export interface PortClient {
       events: HistoryEntry[]
       hasMore: boolean
     }>>
+    prompt(payload: {
+      sessionId: SessionId
+      mode: 'queue' | 'steer'
+      content: Array<{ type: 'text'; text: string }>
+    }, signal?: AbortSignal): Promise<RpcResponse<{
+      accepted: true
+      command?: { kind: 'success'; text?: string }
+    }>>
   }
   events: {
     mux(payload: MuxPayload, signal: AbortSignal, onOpen?: () => void): AsyncIterable<RpcRequest<MuxFrame>>
@@ -99,6 +111,11 @@ export function createDshPort(client: PortClient): DshPort {
     listWorkspaces: (signal) => unary(() => client.workspace.list({}, signal)),
     listSessions: (signal) => unary(() => client.sessions.list({}, signal)),
     loadHistory: (sessionId, signal) => unary(() => client.sessions.history({ sessionId }, signal)),
+    prompt: (sessionId, text, signal) => unary(() => client.sessions.prompt({
+      sessionId,
+      mode: 'queue',
+      content: [{ type: 'text', text }],
+    }, signal)),
     async *stream(signal, onOpen) {
       // Strip the RPC envelope from every mux frame; stream errors surface as
       // the iterable ending, which the app treats as disconnected.

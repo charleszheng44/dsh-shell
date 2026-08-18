@@ -4,10 +4,11 @@ An independent terminal client for DeepSeek Harness.
 
 ## Status
 
-Read-only viewer: connect to a loopback DSH host, list workspaces (projects)
-and sessions, attach to a session by its DSH session ID, and render recent
-finalized user/assistant history as Markdown, including fenced code blocks.
-Live streaming and plain-text input are the next step.
+Terminal proxy: connect to a loopback DSH host, list workspaces (projects)
+and sessions, attach to a session by its DSH session ID, render recent
+finalized user/assistant history and live assistant output as Markdown
+(including fenced code blocks), and submit plain text to the attached
+session.
 
 ## Architecture
 
@@ -47,7 +48,10 @@ pnpm build
 ```
 
 Press `Ctrl+P` for the project selector, `Ctrl+S` for the session selector,
-and `Ctrl+C` to leave the application.
+`Enter` to send the editor's text to the attached session, and `Ctrl+C` to
+leave the application. Submitted text appears in the transcript only after
+DSH logs it; a running session receives additional text through DSH's queue
+policy.
 
 ## Limitations
 
@@ -55,8 +59,11 @@ and `Ctrl+C` to leave the application.
   `http://127.0.0.1:3080`); there is no authentication or TLS.
 - No session or workspace creation, rename, archive, deletion, search, fork,
   model selection, or steering.
-- No live streaming, prompt submission, approvals, questions, attachments,
-  slash commands, or automatic reconnect yet.
+- No session or workspace creation, rename, archive, deletion, search, fork,
+  model selection, or steering.
+- No approvals, questions, attachments, slash commands, or automatic
+  reconnect: losing the stream shows a disconnected state and requires a
+  restart.
 - The client pins the exact published DSH network-client version; an
   incompatible host fails loudly at `host.describe` before any selector
   opens.

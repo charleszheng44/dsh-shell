@@ -28,6 +28,7 @@ function stubClient(overrides: {
     sessions: {
       list: async () => ok({ items: [] }),
       history: async () => ok({ events: [], hasMore: false }),
+      prompt: async () => ok({ accepted: true }),
     },
     events: {
       mux: async function* mux() { return },

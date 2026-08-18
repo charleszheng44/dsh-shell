@@ -26,7 +26,7 @@ import {
   type SelectItem,
 } from '@earendil-works/pi-tui'
 
-import type { AppState, AppView, ProjectRow, SessionRow } from './app.js'
+import type { AppState, AppView, ProjectRow, SessionRow, SubmitResult } from './app.js'
 import { partialSegments, type AssistantSegment, type TranscriptRow } from './transcript.js'
 
 /** Safe picker label: the sanitized title (newlines collapsed so a DSH title
@@ -240,6 +240,7 @@ export class TerminalView implements AppView {
     private readonly onProject: () => void,
     private readonly onSession: () => void,
     private readonly onQuit: () => void,
+    private readonly onSubmit: (text: string) => Promise<SubmitResult>,
   ) {
     this.editor.disableSubmit = true
     const footer = new Text(
@@ -263,6 +264,16 @@ export class TerminalView implements AppView {
         { component: editorRow, basis: 'auto', grow: 0, minSize: 1 },
       ]),
     )
+    this.editor.onSubmit = (text) => {
+      this.editor.disableSubmit = true // guard reentry
+      void this.onSubmit(text).then((result) => {
+        if (result.ok) {
+          this.editor.setText('')
+        }
+        // The App renders the notice; re-enable for the next attempt.
+        this.editor.disableSubmit = !this.editorEnabled
+      })
+    }
     this.tui.addInputListener((data) => {
       if (matchesKey(data, 'ctrl+p')) {
         this.onProject()
@@ -281,16 +292,28 @@ export class TerminalView implements AppView {
   }
 
   start(): void {
-    // PR 2 is read-only: keep focus off the editor so typed characters never
-    // land in a disabled input whose content would be silently discarded.
+    // Focus starts off the editor; render() moves focus to it once an
+    // attached session enables input.
     this.tui.setFocus(null)
     this.tui.start()
   }
 
+  private editorEnabled = false
+
   render(state: AppState): void {
     this.header.setText(headerText(state))
     this.renderTranscript(state.attachment)
-    this.editor.disableSubmit = true
+    // Enable submission only for a connected, attached session, and focus
+    // the editor so typed characters reach it.
+    this.editorEnabled = state.connection === 'connected'
+      && state.attachment.phase === 'attached'
+    this.editor.disableSubmit = !this.editorEnabled
+    if (!this.editorEnabled) {
+      this.editor.setText('')
+      this.tui.setFocus(null)
+    } else {
+      this.tui.setFocus(this.editor)
+    }
     this.tui.requestRender()
   }
 

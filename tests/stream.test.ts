@@ -88,6 +88,14 @@ class FakePort implements DshPort {
     return { ok: true, value: { events: events.map((event) => ({ event })), hasMore: false } }
   }
 
+  promptCalls: Array<{ sessionId: string; text: string }> = []
+  promptResult: Awaited<ReturnType<DshPort['prompt']>> = { ok: true, value: { accepted: true } }
+
+  async prompt(sessionId: string, text: string): Promise<Awaited<ReturnType<DshPort['prompt']>>> {
+    this.promptCalls.push({ sessionId: String(sessionId), text })
+    return this.promptResult
+  }
+
   async *stream(signal: AbortSignal, onOpen: () => void): AsyncIterable<MuxFrame> {
     this.signal = signal
     if (signal.aborted) {
