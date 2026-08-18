@@ -37,6 +37,7 @@ import {
   headerStyle,
   markdownTheme,
   pickerPanelStyle,
+  pickerTitleStyle,
   questionBoxBg,
   toolBoxBg,
   toolDisplayName,
@@ -524,7 +525,7 @@ export class TerminalView implements AppView {
         label: pickerLabel(row.title, fallback),
       }
     })
-    this.showPicker(items, 'Select project', (item) => {
+    this.showPicker(items, pickerTitleStyle('Select project'), (item) => {
       const row = rows.find((candidate) => String(candidate.key) === item.value)
       if (row !== undefined) onSelect(row)
     }, onCancel)
@@ -538,7 +539,7 @@ export class TerminalView implements AppView {
       this.showPicker(items, 'Select session', () => undefined, onCancel)
       return
     }
-    this.showPicker(items, 'Select session', (item) => {
+    this.showPicker(items, pickerTitleStyle('Select session'), (item) => {
       const row = rows.find((candidate) => String(candidate.sessionId) === item.value)
       if (row !== undefined) onSelect(row)
     }, onCancel)
@@ -698,10 +699,11 @@ export function statsText(attachment: AppState['attachment']): string {
   const percent = (pressureTokens / contextWindow) * 100
   // R and W gates are independent, like pi's footer: no "R0" when only cache
   // writes exist.
-  const read = cacheReadTokens > 0 ? ` R${formatTokens(cacheReadTokens)}` : ''
-  const write = cacheWriteTokens > 0 ? ` W${formatTokens(cacheWriteTokens)}` : ''
+  const read = cacheReadTokens > 0 ? ` ∙ R${formatTokens(cacheReadTokens)}` : ''
+  const write = cacheWriteTokens > 0 ? ` ∙ W${formatTokens(cacheWriteTokens)}` : ''
   const context = contextStyle(percent, `${percent.toFixed(1)}%/${formatTokens(contextWindow)}`)
-  return `${footerStyle(`↑${formatTokens(uncachedInputTokens)} ↓${formatTokens(outputTokens)}${read}${write} `)}${context}`
+  // The reference's bullet operator separates the stats parts.
+  return `${footerStyle(`↑${formatTokens(uncachedInputTokens)} ∙ ↓${formatTokens(outputTokens)}${read}${write} `)}${context}`
 }
 
 /** One-line queue status: how many prompts are queued, with the first prompt's

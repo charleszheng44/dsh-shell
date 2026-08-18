@@ -159,6 +159,9 @@ export function contextStyle(percent: number, text: string): string {
 /** Picker panel background: the reference's dim tool-card substrate. */
 export const pickerPanelStyle = sgr('48;5;236')
 
+/** Picker title: bold mist blue, read as the panel's heading. */
+export const pickerTitleStyle = (text: string): string => bold(mistBlue(text))
+
 /** User message bubble background (the reference's userMessageBackground
  *  #292D36). The 256-color fallback (235) stays one step apart from the tool
  *  card so the bubble reads as its own surface. */
