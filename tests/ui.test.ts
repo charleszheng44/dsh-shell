@@ -527,13 +527,19 @@ test('tool rows render boxed with a background that spans every line', () => {
   const container = new Container()
   const cache: Array<{ row: TranscriptRow; component: unknown }> = []
   const rows = [
+    { kind: 'user', text: 'hello' },
     { kind: 'toolCall', name: 'run_code', args: '{"code":"x"}' },
     { kind: 'toolResult', name: 'run_code', output: 'out\nline two', truncated: false, error: false },
     { kind: 'toolResult', name: 'run_code', output: 'command not found', truncated: false, error: true },
   ] as never
   reconcileRows(container, cache as never, rows)
-  assert.equal(container.children.length, 3)
-  const boxed = container.children.slice(1) as Array<{ render(width: number): string[] }>
+  assert.equal(container.children.length, 4)
+  // The user bubble carries the pointer inside it, reference-style.
+  const userLines = (container.children[0] as { render(width: number): string[] }).render(30)
+  const userBody = userLines.join('\n')
+  assert.ok(userBody.includes('❯'), 'user bubble contains the pointer')
+  assert.ok(!userBody.includes('\x1b[0m'), 'no full reset inside the user bubble')
+  const boxed = container.children.slice(1, 4) as Array<{ render(width: number): string[] }>
   // The error result uses the error tint, whatever the terminal's color mode:
   // its background SGR must differ from the success box's.
   const successLines = boxed[0]?.render(30) ?? []
