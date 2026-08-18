@@ -199,7 +199,9 @@ export function parseQuestionAnswers(questions: readonly QuestionItem[], input: 
         .filter((n) => n >= 1 && n <= options.length)
         .map((n) => options[n - 1]?.label ?? '')
         .filter((label) => label !== '')
-      return { id: question.id, selected }
+      // A number that matches no option must not silently produce an empty
+      // answer: fall back to a custom answer with the typed text.
+      if (selected.length > 0) return { id: question.id, selected }
     }
     const exact = options.find((option) => option.label.toLowerCase() === trimmed.toLowerCase())
     if (exact !== undefined) return { id: question.id, selected: [exact.label] }

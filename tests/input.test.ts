@@ -230,9 +230,10 @@ test('parseQuestionAnswers: numbers, labels, and custom text', async () => {
     { id: 'q1', selected: [], custom: 'do the other thing' },
     { id: 'q2', selected: [], custom: 'do the other thing' },
   ])
-  // Out-of-range numbers select nothing.
+  // Out-of-range numbers fall back to a custom answer instead of silently
+  // producing an empty selection.
   assert.deepEqual(parseQuestionAnswers(questions, '9'), [
-    { id: 'q1', selected: [] },
+    { id: 'q1', selected: [], custom: '9' },
     { id: 'q2', selected: [], custom: '9' },
   ])
 })

@@ -149,8 +149,9 @@ export function createDshPort(client: PortClient): DshPort {
       mode: 'queue',
       content: [{ type: 'text', text }],
     }, signal)),
-    // A transport failure folds to a not-pending receipt so the answer flow
-    // can surface a notice; the host treats late duplicates as not-pending.
+    // A transport failure folds to a bad-response receipt so the answer
+    // flow can surface a notice; the host treats late duplicates as
+    // not-pending.
     respond: (message, signal) => client.respond(message, signal)
       .catch(() => ({ accepted: false, reason: 'bad-response' })),
     async *stream(signal, onOpen) {

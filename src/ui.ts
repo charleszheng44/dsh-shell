@@ -721,14 +721,20 @@ export function footerHints(attachment: AppState['attachment']): string {
     : 'Ctrl+P project  Ctrl+S session  Ctrl+C quit\nEnter send · ↑ history · Approvals and questions: use Web UI')
 }
 
-/** The question card's content: the question text and its numbered options. */
+/** The question card's content: the question text (with the supporting
+ *  detail — for plan-review intents the detail IS the plan — and a
+ *  multi-select note), then the numbered options. */
 export function questionCardText(questions: readonly QuestionItem[]): string {
   return questions.map((question) => {
     const options = (question.options ?? [])
       .map((option, index) => `  ${index + 1}. ${terminalSafeText(option.label).replace(/\s+/g, ' ').trim()}`)
       .join('\n')
     const text = terminalSafeText(question.question).replace(/\s+/g, ' ').trim()
-    return `❓ ${text}${options === '' ? '' : `\n${options}`}`
+    const select = question.multiSelect === true ? ' (choose any)' : ''
+    const detail = question.detail === undefined || question.detail === ''
+      ? ''
+      : `\n  ${terminalSafeText(question.detail).replace(/\s+/g, ' ').trim()}`
+    return `❓ ${text}${select}${detail}${options === '' ? '' : `\n${options}`}`
   }).join('\n')
 }
 
