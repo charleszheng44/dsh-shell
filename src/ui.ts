@@ -256,11 +256,11 @@ const TOOL_OUTPUT_PREVIEW_LINES = 10
 /** One transcript line component. User prompts render as a green dot plus a
  *  pi-style background bubble; assistant text as a cyan block plus plain
  *  Markdown; tool calls and results as pi-style boxed blocks (bold title,
- *  gray bounded output). Markers live in their own column so they never
- *  interfere with Markdown parsing — a leading code fence must still be
- *  detected — and the columns align across rows. Tool names, arguments, and
- *  outputs are host- or model-controlled text, so they pass through
- *  terminalSafeText like every other DSH-derived string. */
+ *  gray bounded output). The user and assistant markers live in their own
+ *  column so they never interfere with Markdown parsing — a leading code
+ *  fence must still be detected — while tool rows are full-width boxes.
+ *  Tool names, arguments, and outputs are host- or model-controlled text, so
+ *  they pass through terminalSafeText like every other DSH-derived string. */
 function rowComponent(row: TranscriptRow): Component {
   if (row.kind === 'user') {
     const bubble = new Box(1, 1, userBubbleBg)
@@ -271,16 +271,13 @@ function rowComponent(row: TranscriptRow): Component {
     ])
   }
   if (row.kind === 'toolCall') {
+    // Title and args compose into ONE Text: pi's HStack inserts a full reset
+    // between stacked children, which would kill the box background for the
+    // args, so the segments are joined here with attribute-specific resets.
     const box = new Box(1, 1, toolBoxBg)
-    const title = new Text(toolTitleStyle(terminalSafeText(row.name)), 0, 0)
-    if (row.args !== undefined) {
-      box.addChild(new HStack([
-        { component: title, basis: 'auto', grow: 0 },
-        { component: new Text(toolOutputStyle(terminalSafeText(row.args)), 1, 0), basis: 'auto', grow: 1 },
-      ]))
-    } else {
-      box.addChild(title)
-    }
+    const title = toolTitleStyle(terminalSafeText(row.name))
+    const args = row.args === undefined ? '' : ` ${toolOutputStyle(terminalSafeText(row.args))}`
+    box.addChild(new Text(`${title}${args}`, 0, 0))
     return box
   }
   if (row.kind === 'toolResult') {
@@ -304,7 +301,11 @@ export function toolPreviewText(output: string, truncated: boolean): string {
   const body = truncated && lines.at(-1) === '… (output truncated)' ? lines.slice(0, -1) : lines
   const preview = body.slice(0, TOOL_OUTPUT_PREVIEW_LINES)
   const remaining = body.length - preview.length
-  if (remaining === 0) return preview.join('\n')
+  if (remaining === 0) {
+    // A truncated result whose content fits the preview entirely (e.g. the
+    // 4000-char cap landing on a newline) must still show the bound.
+    return truncated ? `${preview.join('\n')}\n… (output truncated)` : preview.join('\n')
+  }
   return truncated
     ? `${preview.join('\n')}\n… +${remaining} more lines (output truncated)`
     : `${preview.join('\n')}\n… +${remaining} more lines`

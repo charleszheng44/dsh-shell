@@ -458,4 +458,7 @@ test('toolPreviewText shows 10 lines, a +N note, and names truncation', () => {
   // must NOT be dropped when the output was not truncated.
   const markerLooking = `${short}\n… (output truncated)`
   assert.equal(toolPreviewText(markerLooking, false), `${short}\n… +1 more lines`)
+  // A truncated output whose content fits the preview (char cap on a newline)
+  // still surfaces the bound.
+  assert.equal(toolPreviewText('tiny\n… (output truncated)', true), 'tiny\n… (output truncated)')
 })

@@ -12,12 +12,18 @@ import { to256, toolBoxBg, toolOutputStyle, toolTitleStyle, userBubbleBg, userSt
 test('theme resets are attribute-specific so box backgrounds survive', () => {
   // pi's Box wraps each padded row in the background style; a full \x1b[0m
   // inside a styled token would kill the row's background for everything
-  // after it. Every style must reset only the attribute it sets.
-  assert.equal(userBubbleBg('x'), '\x1b[48;2;52;53;65mx\x1b[49m')
-  assert.equal(toolBoxBg('x'), '\x1b[48;2;40;40;50mx\x1b[49m')
-  assert.equal(toolOutputStyle('x'), '\x1b[38;2;128;128;128mx\x1b[39m')
+  // after it. Every style must reset only the attribute it sets. The byte
+  // form of color styles depends on the terminal's truecolor support, so
+  // assert the structure (set code + matching reset) instead of exact bytes.
+  const bubble = userBubbleBg('x')
+  assert.ok(bubble.startsWith('\x1b[48;') && bubble.endsWith('\x1b[49m'), bubble)
+  assert.equal(toolBoxBg('x').endsWith('\x1b[49m'), true)
+  const output = toolOutputStyle('x')
+  assert.ok(output.startsWith('\x1b[38;') && output.endsWith('\x1b[39m'), output)
+  // ANSI colors are capability-independent.
   assert.equal(userStyle('x'), '\x1b[32mx\x1b[39m')
-  assert.equal(toolTitleStyle('x'), '\x1b[1m\x1b[38;2;212;212;212mx\x1b[39m\x1b[22m')
+  const title = toolTitleStyle('x')
+  assert.ok(title.includes('\x1b[39m') && title.endsWith('\x1b[22m'), title)
   // No full reset may appear anywhere in a styled token.
   for (const style of [userBubbleBg, toolBoxBg, toolOutputStyle, userStyle, toolTitleStyle]) {
     assert.ok(!style('x').includes('\x1b[0m'), 'style must not contain a full reset')
