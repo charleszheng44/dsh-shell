@@ -12,16 +12,18 @@
 import type { SessionEvent } from '@deepseek-ai/dsh-session/types'
 import type { StreamChunk } from '@deepseek-ai/dsh-llm/types'
 
-/** One visible piece of assistant output: text, a compact tool marker, or an image. */
+/** One visible piece of assistant output: text, a tool call with its input,
+ *  or an image. */
 export type AssistantSegment =
   | { kind: 'text'; text: string }
-  | { kind: 'tool'; name: string }
+  | { kind: 'tool'; name: string; args?: string }
   | { kind: 'image' }
 
 /** A finalized transcript row. */
 export type TranscriptRow =
   | { kind: 'user'; text: string }
   | { kind: 'assistant'; segments: readonly AssistantSegment[] }
+  | { kind: 'toolResult'; name: string; output: string }
 
 /** Per-block-index accumulator inside a partial. */
 export interface PartialBlock {
@@ -46,10 +48,14 @@ export interface TranscriptState {
   rows: readonly TranscriptRow[]
   partial: PartialAssistant | undefined
   lastSeq: number
+  /** Tool-call ids seen in finalized assistant messages, mapped to their
+   *  names so a later tool/result can name its output row. Cleared at
+   *  turn/end once every result of the turn has arrived. */
+  pendingTools: Readonly<Record<string, string>>
 }
 
 export function emptyTranscript(): TranscriptState {
-  return { rows: [], partial: undefined, lastSeq: -1 }
+  return { rows: [], partial: undefined, lastSeq: -1, pendingTools: {} }
 }
 
 /** Visible segments of a partial in block-index order. */
@@ -74,6 +80,31 @@ export function partialSegments(partial: PartialAssistant): readonly AssistantSe
 /** Upper bound on one block's accumulated visible text (UTF-16 units). */
 const MAX_BLOCK_TEXT_BYTES = 1_000_000
 
+/** Upper bound on one displayed tool input (UTF-16 units). */
+const TOOL_ARGS_MAX = 140
+
+/** Upper bound on one displayed tool output: lines and characters. */
+const TOOL_OUTPUT_MAX_LINES = 24
+const TOOL_OUTPUT_MAX_CHARS = 4000
+
+/** Compact one-line tool input: whitespace collapsed, truncated. */
+function compactToolArgs(args: string): string {
+  const oneLine = args.replace(/\s+/g, ' ').trim()
+  return oneLine.length > TOOL_ARGS_MAX ? `${oneLine.slice(0, TOOL_ARGS_MAX)}…` : oneLine
+}
+
+/** Bound a tool output so a verbose result cannot dominate the transcript. */
+function truncateOutput(text: string): string {
+  const capped = text.length > TOOL_OUTPUT_MAX_CHARS
+    ? `${text.slice(0, TOOL_OUTPUT_MAX_CHARS)}… (output truncated)`
+    : text
+  const lines = capped.split('\n')
+  if (lines.length > TOOL_OUTPUT_MAX_LINES) {
+    return `${lines.slice(0, TOOL_OUTPUT_MAX_LINES).join('\n')}\n… (output truncated)`
+  }
+  return capped
+}
+
 /** Fold one event into the transcript state. Pure: never mutates its inputs. */
 export function applyEvent(state: TranscriptState, event: SessionEvent): TranscriptState {
   const lastSeq = Math.max(state.lastSeq, event.seq)
@@ -97,10 +128,11 @@ export function applyEvent(state: TranscriptState, event: SessionEvent): Transcr
   if (event.type === 'turn/end') {
     // A turn that ended without a finalized assistant/message (error, abort,
     // or empty turn) must not leave abandoned partial text beside later rows.
+    // Every tool result of the turn has arrived by now, so the id map clears.
     if (state.partial !== undefined && state.partial.turn === event.data.turn) {
-      return { ...base, partial: undefined }
+      return { ...base, partial: undefined, pendingTools: {} }
     }
-    return base
+    return { ...base, pendingTools: {} }
   }
 
   if (event.type === 'assistant/message') {
@@ -110,13 +142,44 @@ export function applyEvent(state: TranscriptState, event: SessionEvent): Transcr
     const partial = state.partial !== undefined && state.partial.turn === turn && state.partial.step === step
       ? undefined
       : state.partial
+    // Remember the turn's tool-call ids so a later tool/result can name its
+    // output row; the map is cleared at turn/end.
+    const pendingTools = { ...state.pendingTools }
+    for (const block of event.data.message.content) {
+      const tool = block as { type?: string; id?: unknown; name?: string }
+      if (tool.type === 'tool-call' && typeof tool.id === 'string' && typeof tool.name === 'string') {
+        pendingTools[tool.id] = tool.name
+      }
+    }
     // An empty-content assistant message exists only to carry usage; it
     // finalizes the partial but renders no row.
-    if (segments.length === 0) return { ...base, partial }
+    if (segments.length === 0) return { ...base, partial, pendingTools }
     return {
       ...base,
       partial,
+      pendingTools,
       rows: [...state.rows, { kind: 'assistant', segments }],
+    }
+  }
+
+  if (event.type === 'tool/result') {
+    // The result of a tool call arrives as its own event; render it as a
+    // bounded output row named after the call, matching how the Web UI shows
+    // tool outcomes below the call.
+    const message = event.data?.message as
+      | { source?: { callId?: unknown }; content?: readonly { content?: readonly { type?: string; text?: string }[] }[] }
+      | undefined
+    const callId = typeof message?.source?.callId === 'string' ? message.source.callId : undefined
+    const text = (message?.content ?? [])
+      .flatMap((part) => part.content ?? [])
+      .filter((part) => part.type === 'text' && typeof part.text === 'string')
+      .map((part) => part.text ?? '')
+      .join('\n')
+    const name = callId === undefined ? undefined : state.pendingTools[callId]
+    if (callId === undefined || name === undefined || text === '') return base
+    return {
+      ...base,
+      rows: [...state.rows, { kind: 'toolResult', name, output: truncateOutput(text) }],
     }
   }
 
@@ -190,8 +253,13 @@ function segmentFromBlock(type: string, block: unknown): AssistantSegment | unde
     return text === undefined || text.trim() === '' ? undefined : { kind: 'text', text }
   }
   if (type === 'tool-call') {
-    const name = (block as { name?: string }).name
-    return name === undefined ? undefined : { kind: 'tool', name }
+    const tool = block as { name?: string; arguments?: unknown }
+    const name = tool.name
+    if (name === undefined) return undefined
+    const compact = typeof tool.arguments === 'string' ? compactToolArgs(tool.arguments) : undefined
+    // An empty argument object is display noise; skip it.
+    const args = compact !== undefined && compact !== '' && compact !== '{}' && compact !== '[]' ? compact : undefined
+    return args === undefined ? { kind: 'tool', name } : { kind: 'tool', name, args }
   }
   if (type === 'image') return { kind: 'image' }
   return undefined

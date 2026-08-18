@@ -320,3 +320,94 @@ test('an unterminated code fence stays visible in the partial', () => {
   ])
   assert.deepEqual(partialSegments(state.partial as never), [{ kind: 'text', text: '```ts\nconst x = 1\n' }])
 })
+
+function toolResultEvent(seq: number, callId: string, text: string, opts: { turn?: number; step?: number } = {}): SessionEvent {
+  return {
+    type: 'tool/result',
+    seq,
+    time: 0,
+    data: {
+      turn: opts.turn ?? 1,
+      step: opts.step ?? 1,
+      message: {
+        source: { kind: 'tool', callId },
+        content: [{
+          type: 'tool-result',
+          toolCallId: callId,
+          content: [{ type: 'text', text }],
+        }],
+      },
+    },
+  } as unknown as SessionEvent
+}
+
+function turnEnd(seq: number, turn: number): SessionEvent {
+  return { type: 'turn/end', seq, time: 0, data: { turn } } as unknown as SessionEvent
+}
+
+test('tool-call segments carry their compacted arguments', () => {
+  const state = projectEvents([
+    assistantMessage(1, 1, 1, [{
+      type: 'tool-call',
+      id: 'call-1',
+      name: 'bash',
+      arguments: '{"command": "  ls   -la  ", "description": "List files"}',
+    }]),
+  ])
+  assert.deepEqual(state.rows, [{
+    kind: 'assistant',
+    segments: [{ kind: 'tool', name: 'bash', args: '{"command": " ls -la ", "description": "List files"}' }],
+  }])
+  // A tool-call with an empty argument object carries no args.
+  const empty = projectEvents([
+    assistantMessage(1, 1, 1, [{ type: 'tool-call', id: 'call-2', name: 'bash', arguments: '{}' }]),
+  ])
+  assert.deepEqual(empty.rows, [{
+    kind: 'assistant',
+    segments: [{ kind: 'tool', name: 'bash' }],
+  }])
+})
+
+test('a tool/result appends a named, bounded output row', () => {
+  const state = projectEvents([
+    assistantMessage(1, 1, 1, [{ type: 'tool-call', id: 'call-1', name: 'run_code', arguments: '{"code":"x"}' }]),
+    toolResultEvent(2, 'call-1', 'line one\nline two\nline three'),
+  ])
+  assert.deepEqual(state.rows, [
+    { kind: 'assistant', segments: [{ kind: 'tool', name: 'run_code', args: '{"code":"x"}' }] },
+    { kind: 'toolResult', name: 'run_code', output: 'line one\nline two\nline three' },
+  ])
+})
+
+test('a tool/result for an unknown call is not rendered', () => {
+  const state = projectEvents([
+    toolResultEvent(1, 'call-unknown', 'output'),
+  ])
+  assert.deepEqual(state.rows, [])
+})
+
+test('turn/end clears pending tool names so a late result is dropped', () => {
+  const state = projectEvents([
+    assistantMessage(1, 1, 1, [{ type: 'tool-call', id: 'call-1', name: 'bash', arguments: '{"cmd":"ls"}' }]),
+    turnEnd(2, 1),
+    toolResultEvent(3, 'call-1', 'late output'),
+  ])
+  assert.deepEqual(state.rows, [
+    { kind: 'assistant', segments: [{ kind: 'tool', name: 'bash', args: '{"cmd":"ls"}' }] },
+  ])
+})
+
+test('tool output is truncated to a bounded number of lines', () => {
+  const manyLines = Array.from({ length: 40 }, (_, i) => `line ${i}`).join('\n')
+  const state = projectEvents([
+    assistantMessage(1, 1, 1, [{ type: 'tool-call', id: 'call-1', name: 'bash', arguments: '{}' }]),
+    toolResultEvent(2, 'call-1', manyLines),
+  ])
+  const row = state.rows.find((r) => r.kind === 'toolResult')
+  assert.equal(row?.kind, 'toolResult')
+  if (row?.kind === 'toolResult') {
+    const lines = row.output.split('\n')
+    assert.ok(lines.length <= 25)
+    assert.match(row.output, /output truncated/)
+  }
+})

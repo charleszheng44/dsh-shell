@@ -54,6 +54,8 @@ export type AttachmentState =
       transcript: readonly TranscriptRow[]
       partial: PartialAssistant | undefined
       sending: boolean
+      /** Tool-call ids seen in this attachment, mapped to their names. */
+      pendingTools: Readonly<Record<string, string>>
     }
 
 /** Complete UI state, rendered by the view on every change. */
@@ -295,7 +297,12 @@ export class App {
       return
     }
     const next = applyEvent(
-      { rows: attachment.transcript, partial: attachment.partial, lastSeq: attachment.lastSeq },
+      {
+        rows: attachment.transcript,
+        partial: attachment.partial,
+        lastSeq: attachment.lastSeq,
+        pendingTools: attachment.pendingTools,
+      },
       frame.event,
     )
     this.setState({
@@ -443,6 +450,7 @@ export class App {
     let lastSeq = projected.lastSeq
     let transcript = projected.rows
     let partial = projected.partial
+    let pendingTools = projected.pendingTools
     for (const event of buffered) {
       if (event.seq <= lastSeq) continue
       if (event.seq !== lastSeq + 1) {
@@ -453,10 +461,11 @@ export class App {
         })
         return
       }
-      const next = applyEvent({ rows: transcript, partial, lastSeq }, event)
+      const next = applyEvent({ rows: transcript, partial, lastSeq, pendingTools }, event)
       lastSeq = next.lastSeq
       transcript = next.rows
       partial = next.partial
+      pendingTools = next.pendingTools
     }
     // The connection may have died while history was loading (gap, stream
     // end, stream/error, flood): do not claim a live attachment or clear
@@ -474,6 +483,7 @@ export class App {
         transcript,
         partial,
         sending: false,
+        pendingTools,
       },
       notice: undefined,
     })

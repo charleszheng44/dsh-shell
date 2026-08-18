@@ -48,7 +48,9 @@ export function assistantMarkdown(segments: readonly AssistantSegment[]): string
     .map((segment) => segment.kind === 'text'
       ? segment.text
       : segment.kind === 'tool'
-        ? `Tool: \`${segment.name}\``
+        ? segment.args === undefined
+          ? `\`${segment.name}\``
+          : `\`${segment.name}\` ${segment.args}`
         : '[image]')
     .join('\n\n')
   // Strip control characters BEFORE link neutralization: a control byte
@@ -231,15 +233,27 @@ export class PickerFrame implements Component {
   }
 }
 
-/** One transcript line component: user text or assistant Markdown. Both carry
- *  a marker in its own column (green dot for user prompts, cyan block for
- *  model rows) so markers never interfere with Markdown parsing — a leading
- *  code fence must still be detected — and user/assistant markers align. */
+/** One transcript line component: user text, assistant Markdown, or a tool
+ *  result block. All carry a marker in its own column (green dot for user
+ *  prompts, cyan block for model rows and tool output) so markers never
+ *  interfere with Markdown parsing — a leading code fence must still be
+ *  detected — and the marker columns align across rows. */
 function rowComponent(row: TranscriptRow): Component {
   if (row.kind === 'user') {
     return new HStack([
       { component: new Text(userMarker(), 0, 0), basis: 3, grow: 0 },
       { component: new Text(userStyle(terminalSafeText(row.text)), 1, 0), basis: 'auto', grow: 1 },
+    ])
+  }
+  if (row.kind === 'toolResult') {
+    // Bounded tool output as a fenced code block; the fence is longer than
+    // any backtick run in the output so it cannot close early.
+    const longestRun = Math.max(0, ...(row.output.match(/`+/g)?.map((run) => run.length) ?? [0]))
+    const fence = '`'.repeat(Math.max(3, longestRun + 1))
+    const block = `${fence}\n${row.output}\n${fence}`
+    return new HStack([
+      { component: new Text(assistantMarker(), 0, 0), basis: 3, grow: 0 },
+      { component: new Markdown(terminalSafeText(block), 1, 0, markdownTheme), basis: 'auto', grow: 1 },
     ])
   }
   return new HStack([
