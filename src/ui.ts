@@ -158,8 +158,9 @@ export class TerminalView implements AppView {
       : state.selectedProject === undefined
         ? 'no project'
         : state.projects.find((project) => project.key === state.selectedProject)?.title ?? 'unknown'
+    const notice = state.notice === undefined ? '' : ` · ${state.notice}`
     this.header.setText(
-      terminalSafeText(`${projectTitle} / ${sessionTitle} / ${state.connection}`),
+      terminalSafeText(`${projectTitle} / ${sessionTitle} / ${state.connection}${notice}`),
     )
     this.renderTranscript(attachment)
     this.editor.disableSubmit = true
