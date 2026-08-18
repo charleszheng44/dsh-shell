@@ -15,6 +15,7 @@ import {
   HStack,
   Markdown,
   matchesKey,
+  visibleWidth,
   ProcessTerminal,
   ScrollView,
   SelectList,
@@ -217,14 +218,11 @@ export function terminalSafeText(text: string): string {
   )
 }
 
-/** ANSI-aware visible width: SGR sequences carry no columns. */
-function visibleLength(text: string): number {
-  return text.replace(/\x1b\[[0-9;]*m/g, '').length
-}
-
 /** Bordered, titled panel around a picker list so the overlay reads as a
  *  separate panel instead of mixing with the transcript text. Keyboard input
- *  is delegated to the wrapped component (the SelectList owns selection). */
+ *  is delegated to the wrapped component (the SelectList owns selection).
+ *  All budgets use pi's visibleWidth (CJK glyphs are two columns, so a JS
+ *  character count would overflow the frame). */
 export class PickerFrame implements Component {
   private readonly children: Component[] = []
 
@@ -250,13 +248,18 @@ export class PickerFrame implements Component {
     // Truncation falls back to the unstyled text: pi's truncateToWidth would
     // append a full reset that kills the panel background on the border.
     const plain = this.title.replace(/\x1b\[[0-9;]*m/g, '')
-    const title = plain.length > inner - 2 ? plain.slice(0, Math.max(0, inner - 2)) : this.title
-    const used = visibleLength(title)
+    const title = visibleWidth(plain) > inner - 2 ? plain.slice(0, Math.max(0, inner - 2)) : this.title
+    const used = visibleWidth(title)
+    // A child (the SelectList) truncates long labels with a full reset that
+    // would kill the panel background for the row's padding and border;
+    // re-apply the panel's background set-code after every such reset.
+    const bgSet = this.style('').slice(0, this.style('').indexOf('m') + 1)
     const lines: string[] = []
     lines.push(this.style(`┌─ ${title}${'─'.repeat(Math.max(0, inner - used))}┐`))
     for (const row of rows) {
-      const pad = Math.max(0, inner - visibleLength(row))
-      lines.push(this.style(`│ ${row}${' '.repeat(pad)} │`))
+      const cleaned = bgSet === '' ? row : row.replace(/\x1b\[0m/g, bgSet)
+      const pad = Math.max(0, inner - visibleWidth(cleaned))
+      lines.push(this.style(`│ ${cleaned}${' '.repeat(pad)} │`))
     }
     lines.push(this.style(`└${'─'.repeat(inner + 2)}┘`))
     return lines
