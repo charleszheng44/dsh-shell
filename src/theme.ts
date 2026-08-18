@@ -104,43 +104,44 @@ const underline = sgr('4')
 const strikethrough = sgr('9')
 const fgGreen = sgr('32')
 const fgCyan = sgr('36')
-const fgYellow = sgr('33')
 const boldCyan = sgr('1;36')
 const dimRed = sgr('2;31')
 
-// pi's dark palette (hex values from pi-coding-agent's dark theme).
-const piGold = fgHex('#f0c674')
-const piTeal = fgHex('#8abeb7')
-const piLinkBlue = fgHex('#81a2be')
-const piGreen = fgHex('#b5bd68')
-const piGray = fgHex('#808080')
-const piDimGray = fgHex('#666666')
-const piText = fgHex('#d4d4d4')
-// The Web UI's Deep diving turn status is the brand blue.
-const piBlue = fgHex('#4276e6')
+// The Gentle Mist Blue (雾蓝) dark palette, from the dsh-TUI reference
+// client: warm off-white text, mist blues for brand and interaction, soft
+// rose/amber/green for status. Kept for the 256-color fallbacks in bgHex.
+const mistText = fgHex('#e8e6e0')
+const mistBlue = fgHex('#7da1de')
+const mistShimmer = fgHex('#abc2ec')
+const mistAccentBlue = fgHex('#5e88cc')
+const mistSubtle = fgHex('#5e6673')
+const mistInactive = fgHex('#8d95a6')
+const mistSage = fgHex('#9fbf8f')
+const mistWarmTan = fgHex('#d9a97e')
+const mistRose = fgHex('#da8a93')
+const mistAmber = fgHex('#d8b270')
+const mistGreen = fgHex('#82b89d')
 
-/** Header line: bold bright cyan. */
+/** Header line: bold mist brand blue. */
 export function headerStyle(text: string): string {
-  return boldCyan(text)
+  return bold(mistBlue(text))
 }
 
-/** User transcript rows: green, so your own prompts stand apart from the assistant. */
+/** User transcript rows: warm off-white, like the reference's user prompt text. */
 export function userStyle(text: string): string {
-  return fgGreen(text)
+  return mistText(text)
 }
 
-/** User prompt marker: a green dot in its own column. U+25CF renders in
- *  every terminal font (the earlier U+276F chevron showed as tofu on some
- *  fonts). */
+/** User prompt marker: the reference's right chevron in the subtle gray. */
 export function userMarker(): string {
-  return fgGreen('● ')
+  return mistSubtle('❯ ')
 }
 
-/** Assistant response marker: a cyan block that prefixes model rows and the
- *  in-flight partial, chat-style. Rendered in its own component so it never
- *  interferes with Markdown parsing (e.g. a leading code fence). */
+/** Assistant response marker: a mist-blue block that prefixes model rows and
+ *  the in-flight partial, chat-style. Rendered in its own component so it
+ *  never interferes with Markdown parsing (e.g. a leading code fence). */
 export function assistantMarker(): string {
-  return fgCyan('▍ ')
+  return mistBlue('▍ ')
 }
 
 /** Footer hint line: dim. */
@@ -148,82 +149,81 @@ export function footerStyle(text: string): string {
   return dim(text)
 }
 
-/** Context-usage coloring, mirroring pi's footer: red past 90%, yellow past 70%. */
+/** Context-usage coloring: the reference's amber past 70%, rose past 90%. */
 export function contextStyle(percent: number, text: string): string {
-  if (percent > 90) return dimRed(text)
-  if (percent > 70) return fgYellow(text)
+  if (percent > 90) return mistRose(text)
+  if (percent > 70) return mistAmber(text)
   return dim(text)
 }
 
-/** Picker panel background: dark gray, so the overlay separates from the transcript. */
+/** Picker panel background: the reference's dim tool-card substrate. */
 export const pickerPanelStyle = sgr('48;5;236')
 
-/** User message bubble background (pi's userMessageBg #343541): your prompts
- *  render in a subtle bubble like the pi coding agent. */
-export const userBubbleBg = bgHex('#343541')
+/** User message bubble background (the reference's userMessageBackground
+ *  #292D36). The 256-color fallback (235) stays one step apart from the tool
+ *  card so the bubble reads as its own surface. */
+export const userBubbleBg = bgHex('#292d36', 235)
 
-/** Tool block background (pi's toolPendingBg #282832) for call boxes. */
-export const toolBoxBg = bgHex('#282832')
+/** Tool block background (the reference's toolCardBackground #242B3A) for
+ *  call boxes. */
+export const toolBoxBg = bgHex('#242b3a')
 
-/** Tool result background (pi's toolSuccessBg #283228): a finished result
- *  shifts to the success tint, like the pi coding agent. */
-export const toolResultBoxBg = bgHex('#283228')
+/** Tool result background: the reference's dim green diff surface #2B352C —
+ *  a finished result shifts to the success tint. The 256-color fallback
+ *  (237) keeps it distinct from the pending card. */
+export const toolResultBoxBg = bgHex('#2b352c', 237)
 
-/** Failed tool result background (pi's toolErrorBg #3c2828). Its nearest
- *  256-color index is 236 — the same as the success tint #283228 — so the
- *  fallback uses the next gray step (237) to keep the error state visible on
- *  terminals without truecolor. */
-export const toolErrorBoxBg = bgHex('#3c2828', 237)
+/** Failed tool result background: the reference's dim rose diff surface
+ *  #362B2C. The 256-color fallback (238) keeps it distinct from the pending
+ *  card (236) and the success card (237). */
+export const toolErrorBoxBg = bgHex('#362b2c', 238)
 
-/** Question card background (pi's customMsgBg #2d2838): a host question
- *  renders as its own boxed card at the transcript tail. The nearest
- *  256-color index is 236 — shared with the tool boxes and picker panel —
- *  so the fallback uses the next gray step (238) to keep the card distinct
- *  on terminals without truecolor. */
-export const questionBoxBg = bgHex('#2d2838', 238)
+/** Question card background (the reference's memoryBackgroundColor #30353D):
+ *  a host question renders as its own boxed card at the transcript tail. */
+export const questionBoxBg = bgHex('#30353d', 239)
 
-/** Tool title: pi renders the tool name bold in the default text color. */
-export const toolTitleStyle = (text: string): string => bold(piText(text))
+/** Tool title: bold in the warm off-white text color. */
+export const toolTitleStyle = (text: string): string => bold(mistText(text))
 
-/** Tool output: pi renders tool results in gray (muted). */
-export const toolOutputStyle = (text: string): string => piGray(text)
+/** Tool output: the reference's subtle blue-gray (muted). */
+export const toolOutputStyle = (text: string): string => mistSubtle(text)
 
-/** Working status ("Deep diving...", the Web UI's brand blue, bold). */
-export const workingStyle = (text: string): string => bold(piBlue(text))
+/** Working status ("Deep diving...", the reference's mist brand blue, bold). */
+export const workingStyle = (text: string): string => bold(mistBlue(text))
 
-/** Assistant Markdown in pi's dark palette: gold headings, teal code and list
- *  bullets, blue links, green code blocks, gray quotes — readable on the
- *  default terminal background. */
+/** Assistant Markdown in the Gentle Mist Blue palette: warm tan headings,
+ *  mist-blue code and bullets, shimmer-blue links, sage code blocks, subtle
+ *  quotes — readable on the default terminal background. */
 export const markdownTheme: MarkdownTheme = {
-  heading: piGold,
-  link: (text: string) => underline(piLinkBlue(text)),
-  linkUrl: piDimGray,
-  code: piTeal,
-  codeBlock: piGreen,
-  codeBlockBorder: piGray,
-  quote: piGray,
-  quoteBorder: piGray,
-  hr: piGray,
-  listBullet: piTeal,
+  heading: mistWarmTan,
+  link: (text: string) => underline(mistShimmer(text)),
+  linkUrl: mistInactive,
+  code: mistBlue,
+  codeBlock: mistSage,
+  codeBlockBorder: mistSubtle,
+  quote: mistSubtle,
+  quoteBorder: mistSubtle,
+  hr: mistSubtle,
+  listBullet: mistBlue,
   bold,
   italic,
   strikethrough,
   underline,
 }
 
-/** Editor (cyan border) and the picker SelectList (cyan selection, dim
- *  descriptions and scroll info). */
+/** Editor (mist accent border) and the picker SelectList (mist selection,
+ *  dim descriptions and scroll info). */
 export const editorTheme: EditorTheme = {
-  borderColor: fgCyan,
+  borderColor: mistAccentBlue,
   selectList: {
     // pi 0.84.2 declares selectedPrefix but renders a hardcoded "→ " prefix;
     // the key is required by the theme type, so provide the styled form for
     // forwards compatibility. Attribute-specific resets keep the panel
     // background alive on rows that carry it.
-    selectedPrefix: (text: string) => `\x1b[1;36m${text}\x1b[22;39m`,
-    selectedText: boldCyan,
+    selectedPrefix: (text: string) => bold(mistBlue(text)),
+    selectedText: (text: string) => bold(mistBlue(text)),
     description: dim,
     scrollInfo: dim,
-    noMatch: dimRed,
+    noMatch: mistRose,
   },
 }

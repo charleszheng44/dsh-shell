@@ -343,11 +343,15 @@ test('formatTokens matches pi footer formatting', () => {
   assert.equal(formatTokens(10000000), '10M')
 })
 
-test('contextStyle colors past the pi warning and error thresholds', () => {
-  assert.ok(contextStyle(70, 'x').includes('\x1b[2m'), '70% stays dim')
-  assert.ok(contextStyle(70.001, 'x').includes('\x1b[33m'), 'just past 70% warns yellow')
-  assert.ok(contextStyle(90, 'x').includes('\x1b[33m'), '90% still yellow')
-  assert.ok(contextStyle(90.001, 'x').includes('\x1b[2;31m'), 'past 90% turns red')
+test('contextStyle colors past the mist warning and error thresholds', () => {
+  const dimBase = contextStyle(70, 'x')
+  assert.ok(dimBase.includes('\x1b[2m'), '70% stays dim')
+  const warning = contextStyle(70.001, 'x')
+  assert.ok(warning !== dimBase && warning.endsWith('\x1b[39m'), 'just past 70% warns amber')
+  const stillWarning = contextStyle(90, 'x')
+  assert.equal(stillWarning, warning, '90% still amber')
+  const error = contextStyle(90.001, 'x')
+  assert.ok(error !== warning && error.endsWith('\x1b[39m'), 'past 90% turns rose')
 })
 
 test('statsText renders a pi-style usage line only while attached', () => {
