@@ -4,13 +4,20 @@ An independent terminal client for DeepSeek Harness.
 
 ## Status
 
-The repository currently contains the terminal application shell. Connecting it to DSH requires a versioned external client package from `deepseek-harness`; until that exists, the executable deliberately reports that it is disconnected.
+Read-only viewer: connect to a loopback DSH host, list workspaces (projects)
+and sessions, attach to a session by its DSH session ID, and render recent
+finalized user/assistant history as Markdown, including fenced code blocks.
+Live streaming and plain-text input are the next step.
 
 ## Architecture
 
-One DSH host owns workspaces, sessions, agents, tools, persistence, queues, approvals, questions, and streaming events. `dsh-tui` connects as a client and renders those structured events with `@earendil-works/pi-tui`.
+One DSH host owns workspaces, sessions, agents, tools, persistence, queues,
+approvals, questions, and streaming events. `dsh-tui` connects as a client
+and renders those structured events with `@earendil-works/pi-tui`.
 
-The terminal and Web UI attach to the same DSH session ID. They must connect to the same running DSH host; separate DSH processes must not coordinate by writing the same session database.
+The terminal and Web UI attach to the same DSH session ID. They must connect
+to the same running DSH host; separate DSH processes must not coordinate by
+writing the same session database.
 
 ```text
                  +-- Web UI
@@ -23,9 +30,10 @@ This repository owns:
 - terminal input and lifecycle;
 - project and session selectors;
 - transcript and Markdown rendering;
-- client-side connection status and reconnection.
+- client-side connection status.
 
-It does not own agent execution, session persistence, prompt ordering, or interpretation of raw process output.
+It does not own agent execution, session persistence, prompt ordering, or
+interpretation of raw process output.
 
 ## Development
 
@@ -38,4 +46,17 @@ pnpm check
 pnpm build
 ```
 
-Press `Ctrl+C` to leave the application shell.
+Press `Ctrl+P` for the project selector, `Ctrl+S` for the session selector,
+and `Ctrl+C` to leave the application.
+
+## Limitations
+
+- Only loopback `http:` hosts are accepted (`--host`, default
+  `http://127.0.0.1:3080`); there is no authentication or TLS.
+- No session or workspace creation, rename, archive, deletion, search, fork,
+  model selection, or steering.
+- No live streaming, prompt submission, approvals, questions, attachments,
+  slash commands, or automatic reconnect yet.
+- The client pins the exact published DSH network-client version; an
+  incompatible host fails loudly at `host.describe` before any selector
+  opens.
