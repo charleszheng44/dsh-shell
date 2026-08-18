@@ -249,6 +249,7 @@ test('events arriving during history load are buffered and folded contiguously',
   await flush()
   const last = view.renders.at(-1)
   assert.equal(last?.connection, 'connected')
+  assert.equal(last?.attachment.phase, 'attached')
   if (last?.attachment.phase === 'attached') {
     assert.equal(last.attachment.lastSeq, 4)
     assert.equal(last.attachment.transcript.length, 2)
@@ -264,6 +265,32 @@ test('frames for another session are ignored', async () => {
   port.push(sessionFrame('other', userText(9, 'intruder')))
   await flush()
   const last = view.renders.at(-1)
+  assert.equal(last?.attachment.phase, 'attached')
+  if (last?.attachment.phase === 'attached') {
+    assert.equal(last.attachment.lastSeq, 1)
+    assert.equal(last.attachment.transcript.length, 1)
+  }
+})
+
+test('an other-session frame during history load is not buffered', async () => {
+  const port = new FakePort()
+  port.historyEvents = { s1: [userText(1, 'q')] }
+  const { app, view } = await booted(port)
+  let releaseHistory: (value: Awaited<ReturnType<DshPort['loadHistory']>>) => void = () => undefined
+  const original = port.loadHistory.bind(port)
+  port.loadHistory = (sessionId) => new Promise((resolve) => {
+    releaseHistory = resolve
+    void original(sessionId)
+  })
+  const attach = app.attach('s1' as never)
+  await Promise.resolve()
+  // An other-session frame while loading must not enter the buffer.
+  port.push(sessionFrame('other', userText(9, 'intruder')))
+  await flush()
+  releaseHistory({ ok: true, value: { events: [{ event: userText(1, 'q') }], hasMore: false } })
+  await attach
+  const last = view.renders.at(-1)
+  assert.equal(last?.attachment.phase, 'attached')
   if (last?.attachment.phase === 'attached') {
     assert.equal(last.attachment.lastSeq, 1)
     assert.equal(last.attachment.transcript.length, 1)
@@ -284,6 +311,7 @@ test('switching sessions during history load drops the stale generation', async 
   releaseS1({ ok: true, value: { events: [{ event: userText(99, 'stale') }], hasMore: false } })
   await attachS1
   const last = view.renders.at(-1)
+  assert.equal(last?.attachment.phase, 'attached')
   if (last?.attachment.phase === 'attached') {
     assert.equal(last.attachment.sessionId, 's2')
     assert.equal(last.attachment.lastSeq, 1)
@@ -363,6 +391,7 @@ test('history prefix plus live suffix stitches one transcript', async () => {
   } } as never))
   await new Promise((resolve) => setTimeout(resolve, 10))
   const last = view.renders.at(-1)
+  assert.equal(last?.attachment.phase, 'attached')
   if (last?.attachment.phase === 'attached') {
     assert.equal(last.attachment.lastSeq, 5)
     assert.equal(last.attachment.partial, undefined)
@@ -395,6 +424,24 @@ test('stream throw marks disconnected', async () => {
   const boot = await app.boot()
   assert.equal(boot.ok, false)
   assert.equal(view.renders.at(-1)?.connection, 'disconnected')
+})
+
+test('a render throw rejects the pump, distinct from a stream failure', async () => {
+  // The design failure table: "Render code throws -> Run the one shutdown
+  // path, print the safe error, exit nonzero." The pump must rethrow the
+  // render error (so the CLI's failure handlers run) instead of treating it
+  // as a stream failure that merely marks disconnected.
+  const port = new FakePort()
+  port.historyEvents = { s1: [userText(1, 'q')] }
+  const view = new FakeView()
+  const app = new App(port, view, new AbortController().signal)
+  const boot = await app.boot()
+  assert.equal(boot.ok, true)
+  await app.attach('s1' as never)
+  // The next live frame triggers a render failure.
+  view.render = () => { throw new Error('render blew up') }
+  port.push(sessionFrame('s1', userText(2, 'live')))
+  await assert.rejects(() => app.waitForPump(), /render blew up/)
 })
 
 test('stream/error frame marks disconnected', async () => {
@@ -434,6 +481,7 @@ test('empty history page accepts a first live event at seq 0', async () => {
   await flush()
   const last = view.renders.at(-1)
   assert.equal(last?.connection, 'connected')
+  assert.equal(last?.attachment.phase, 'attached')
   if (last?.attachment.phase === 'attached') {
     assert.equal(last.attachment.lastSeq, 0)
     assert.equal(last.attachment.transcript.length, 1)
@@ -537,6 +585,7 @@ test('a gap in the attached phase stops the pump', async () => {
   port.push(sessionFrame('s1', userText(10, 'after gap')))
   await flush()
   const last = view.renders.at(-1)
+  assert.equal(last?.attachment.phase, 'attached')
   if (last?.attachment.phase === 'attached') {
     assert.equal(last.attachment.lastSeq, 1)
   }
