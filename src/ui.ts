@@ -121,7 +121,6 @@ export class TerminalView implements AppView {
   private readonly header = new Text('', 1, 0)
   private readonly editor = new Editor(this.tui, editorTheme, { paddingX: 1 })
   private overlay: OverlayHandle | undefined
-  private pickerComponent: Component | undefined
 
   constructor(
     private readonly onProject: () => void,
@@ -256,7 +255,6 @@ export class TerminalView implements AppView {
       this.closePicker()
       onCancel()
     }
-    this.pickerComponent = list
     this.overlay = this.tui.showOverlay(list, {
       width: '60%',
       maxHeight: '50%',
@@ -267,7 +265,6 @@ export class TerminalView implements AppView {
   closePicker(): void {
     this.overlay?.hide()
     this.overlay = undefined
-    this.pickerComponent = undefined
     this.tui.requestRender()
   }
 

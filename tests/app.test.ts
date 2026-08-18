@@ -86,7 +86,6 @@ class FakePort implements DshPort {
   sessions: SessionSummary[] = []
   /** Per-session history events; absent sessionId means session-not-found. */
   historyEvents: Record<string, SessionEvent[]> = {}
-  listWorkspacesCalls = 0
   historyCalls: SessionId[] = []
 
   describe(signal?: AbortSignal): ReturnType<DshPort['describe']> {
@@ -94,7 +93,6 @@ class FakePort implements DshPort {
   }
 
   async listWorkspaces(): Promise<Awaited<ReturnType<DshPort['listWorkspaces']>>> {
-    this.listWorkspacesCalls += 1
     return { ok: true, value: { items: this.workspaces, archivedSessionIds: this.archived } }
   }
 
@@ -264,7 +262,6 @@ test('list failure keeps the current rows and shows the safe error', async () =>
   port.workspaces = [workspace({ workspaceId: 'w1' as never, title: 'p', sessionIds: ['s1' as never] })]
   port.sessions = [summary({ sessionId: 's1' as never })]
   const { app, view } = await booted(port)
-  const original = port.listWorkspaces.bind(port)
   port.listWorkspaces = async () => {
     return { ok: false, error: { code: 'internal', message: 'boom', details: {} } }
   }
@@ -272,7 +269,6 @@ test('list failure keeps the current rows and shows the safe error', async () =>
   const last = view.renders.at(-1)
   assert.equal(last?.notice, 'boom')
   assert.ok(view.projectPickerRows !== undefined)
-  void original
 })
 
 test('shutdown is idempotent', async () => {
