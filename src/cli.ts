@@ -18,6 +18,21 @@ import { TerminalView, terminalSafeText } from './ui.js'
 /** Default loopback host, per the design doc. */
 export const DEFAULT_HOST = 'http://127.0.0.1:3080'
 
+/** Upper bound on waiting for the stream pump to settle after abort. */
+export const PUMP_SETTLE_TIMEOUT_MS = 2_000
+
+/** Classify a pump rejection during shutdown. The lifecycle gate aborts
+ *  before exit(), so the controller state cannot distinguish abort-driven
+ *  from genuine rejections — the error itself can: an AbortError is the
+ *  expected shutdown signal, anything else is a render failure that must be
+ *  surfaced with a nonzero exit instead of being swallowed. Returns true
+ *  when the rejection was surfaced. */
+export function pumpSettleError(error: unknown, surface: (message: string) => void): boolean {
+  if (error instanceof Error && error.name === 'AbortError') return false
+  surface(error instanceof Error ? error.message : String(error))
+  return true
+}
+
 export type HostParseResult =
   | { ok: true; origin: URL }
   | { ok: false; error: string }
@@ -126,17 +141,37 @@ export async function main(argv: readonly string[]): Promise<number> {
     }
   }
 
+  let submit: (text: string) => Promise<import('./app.js').SubmitResult> = async () => ({ ok: false, reason: 'not-attached' })
   const view = new TerminalView(
     () => { void app.openProjectPicker() },
     () => { void app.openSessionPicker() },
     () => { shutdown(0) },
+    (text) => submit(text),
   )
   const app = new App(createDshPort(new NodeApiClient(origin)), view, controller.signal)
+  submit = (text) => app.submit(text)
 
   const shutdown = createLifecycle({
     abort: () => controller.abort(),
     stop: () => app.shutdown(),
-    exit: (code) => { resolveExit(code) },
+    // The published client's abort closes the WebSocket, so the pump settles
+    // without any timeout or forced exit; resolve only once it has.
+    exit: (code) => {
+      // The published client's abort closes the WebSocket, so the pump
+      // normally settles immediately; a host that ignores the closing
+      // handshake must not hang the exit, so bound the wait.
+      const deadline = AbortSignal.timeout(PUMP_SETTLE_TIMEOUT_MS)
+      void Promise.race([app.waitForPump(), new Promise((resolve) => {
+        deadline.addEventListener('abort', resolve, { once: true })
+      })]).catch((error) => {
+        // The gate aborts before exit(), so the controller state cannot
+        // tell abort-driven from genuine pump rejections; the error can.
+        pumpSettleError(error, (message) => {
+          console.error(terminalSafeText(`dsh-tui: ${message}`))
+          resolveExit(1)
+        })
+      }).finally(() => { resolveExit(code) })
+    },
     disposeSignals,
   })
 

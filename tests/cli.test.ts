@@ -5,7 +5,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { DEFAULT_HOST, createLifecycle, parseHostArg } from '../src/cli.js'
+import { DEFAULT_HOST, createLifecycle, parseHostArg, pumpSettleError } from '../src/cli.js'
 
 test('defaults to the documented loopback host', () => {
   const result = parseHostArg([])
@@ -126,4 +126,16 @@ test('uncaughtException and unhandledRejection route through the shutdown gate',
   for (const handler of handlers) handler(new Error('render blew up'))
   dispose()
   assert.deepEqual(calls, ['gate:1', 'gate:1'])
+})
+
+test('pumpSettleError surfaces non-abort rejections and ignores AbortError', () => {
+  // The lifecycle gate aborts before exit(), so the controller state cannot
+  // distinguish abort-driven from genuine pump rejections; the error name can.
+  const surfaced: string[] = []
+  assert.equal(pumpSettleError(new DOMException('aborted', 'AbortError'), (m) => surfaced.push(m)), false)
+  assert.equal(surfaced.length, 0)
+  assert.equal(pumpSettleError(new Error('render blew up'), (m) => surfaced.push(m)), true)
+  assert.deepEqual(surfaced, ['render blew up'])
+  assert.equal(pumpSettleError('string rejection', (m) => surfaced.push(m)), true)
+  assert.deepEqual(surfaced, ['render blew up', 'string rejection'])
 })

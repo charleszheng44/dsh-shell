@@ -9,14 +9,20 @@
 
 import assert from 'node:assert/strict'
 import { spawn, type ChildProcess } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
+import type { Duplex } from 'node:stream'
+import type { IncomingMessage } from 'node:http'
 import { test } from 'node:test'
 
 const ENTRY = new URL('../src/cli.ts', import.meta.url).pathname
 
-/** Minimal stub DSH host: answers the three list/describe calls the TUI makes at boot. */
-function startStubHost(): Promise<{ server: Server; origin: string }> {
+/** Minimal stub DSH host: answers the three list/describe calls the TUI makes
+ *  at boot, and accepts the events.mux WebSocket upgrade with a subscribed
+ *  frame so the TUI's stream readiness resolves. With dropMux the socket is
+ *  destroyed shortly after the subscribed frame to simulate a stream failure. */
+function startStubHost(options: { dropMux?: boolean } = {}): Promise<{ server: Server; origin: string }> {
   const server = createServer((req, res) => {
     let body = ''
     req.on('data', (chunk: Buffer) => { body += chunk.toString() })
@@ -49,6 +55,62 @@ function startStubHost(): Promise<{ server: Server; origin: string }> {
       const rpcId = (JSON.parse(body) as { rpcId?: string }).rpcId ?? 'stub'
       res.writeHead(200, { 'content-type': 'application/json' })
       res.end(JSON.stringify({ type: 'server-response', rpcId, result: { ok: true, value } }))
+    })
+  })
+  server.on('upgrade', (req: IncomingMessage, socket: Duplex) => {
+    if (req.url !== '/api/events.mux') {
+      socket.destroy()
+      return
+    }
+    const key = req.headers['sec-websocket-key']
+    if (typeof key !== 'string') {
+      socket.destroy()
+      return
+    }
+    const accept = createHash('sha1')
+      .update(`${key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`)
+      .digest('base64')
+    socket.write(
+      'HTTP/1.1 101 Switching Protocols\r\n'
+      + 'Upgrade: websocket\r\n'
+      + 'Connection: Upgrade\r\n'
+      + `Sec-WebSocket-Accept: ${accept}\r\n\r\n`,
+    )
+    // One unmasked text frame: session/subscribed for the attached session.
+    const payload = JSON.stringify({
+      type: 'server-request',
+      rpcId: 'stub-mux',
+      method: 'events.mux',
+      payload: { type: 'session/subscribed', sessionId: 's1', lastSeq: 0 },
+    })
+    // Server-to-client text frame; payloads >= 126 bytes need the extended
+    // length form (0x7E + 16-bit length). Never set the mask bit.
+    const frame = Buffer.alloc(payload.length >= 126 ? 4 + payload.length : 2 + payload.length)
+    frame[0] = 0x81
+    if (payload.length >= 126) {
+      frame[1] = 0x7e
+      frame.writeUInt16BE(payload.length, 2)
+      frame.write(payload, 4)
+    } else {
+      frame[1] = payload.length
+      frame.write(payload, 2)
+    }
+    socket.write(frame)
+    if (options.dropMux === true) {
+      // Simulate the host dropping the stream after readiness: the TUI must
+      // show Disconnected and stay responsive to Ctrl+C.
+      setTimeout(() => socket.destroy(), 30)
+      return
+    }
+    // Answer the client's close frame so the pump settles naturally instead
+    // of only via the CLI's bounded timeout.
+    socket.on('data', (chunk: Buffer) => {
+      const first = chunk[0]
+      if (chunk.length >= 2 && first !== undefined && (first & 0x0f) === 0x8) {
+        const reply = Buffer.from([0x88, 0x00])
+        socket.write(reply)
+        socket.end()
+      }
     })
   })
   return new Promise((resolve) => {
@@ -166,6 +228,35 @@ test('repeated shutdown restores the terminal once', async () => {
     assert.ok(result.code === 130 || result.code === 143, `unexpected exit code ${result.code}`)
     const leaves = result.stdout.split('\x1b[?1049l').length - 1
     assert.equal(leaves, 1)
+  } finally {
+    server.close()
+  }
+})
+
+/** Wait until the TUI's stdout contains a substring (polling like waitForConnected). */
+async function waitForStdout(stdoutRef: { value: string }, needle: string, timeoutMs = 5000): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (stdoutRef.value.includes(needle)) return
+    await sleep(50)
+  }
+  throw new Error(`TUI stdout never contained ${JSON.stringify(needle)}`)
+}
+
+test('a dropped mux stream shows Disconnected and Ctrl+C still restores once', async () => {
+  const { server, origin } = await startStubHost({ dropMux: true })
+  try {
+    const { child, done } = runCli(['--host', origin])
+    const stdoutRef = { value: '' }
+    child.stdout?.on('data', (chunk: Buffer) => { stdoutRef.value += chunk.toString() })
+    await waitForConnected(child, stdoutRef)
+    // The host dropped the socket: the footer must show Disconnected instead
+    // of hanging or retrying, and the terminal stays interactive.
+    await waitForStdout(stdoutRef, 'Disconnected')
+    child.stdin?.write('\u0003') // Ctrl+C
+    const result = await done
+    assert.equal(result.code, 0)
+    assert.equal(result.restored, true)
   } finally {
     server.close()
   }

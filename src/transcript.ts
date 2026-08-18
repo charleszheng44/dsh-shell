@@ -71,6 +71,9 @@ export function partialSegments(partial: PartialAssistant): readonly AssistantSe
   return segments
 }
 
+/** Upper bound on one block's accumulated visible text (UTF-16 units). */
+const MAX_BLOCK_TEXT_BYTES = 1_000_000
+
 /** Fold one event into the transcript state. Pure: never mutates its inputs. */
 export function applyEvent(state: TranscriptState, event: SessionEvent): TranscriptState {
   const lastSeq = Math.max(state.lastSeq, event.seq)
@@ -162,7 +165,12 @@ function updateBlocks(blocks: Map<number, PartialBlock>, chunk: StreamChunk): Re
     // (robust against reordered live chunks in PR 3).
     const current = blocks.get(chunk.index) ?? { type: undefined, text: '', final: undefined }
     if (current.final !== undefined) return blocks
-    blocks.set(chunk.index, { ...current, text: current.text + chunk.text })
+    const text = current.text + chunk.text
+    // A hostile host must not be able to grow one block's accumulator without
+    // bound; past the cap the block is dropped (the stream gap rules then
+    // disconnect the client).
+    if (text.length > MAX_BLOCK_TEXT_BYTES) return blocks
+    blocks.set(chunk.index, { ...current, text })
   } else if (chunk.type === 'block-end') {
     const block = chunk.block
     const current = blocks.get(chunk.index) ?? { type: block.type, text: '', final: undefined }
