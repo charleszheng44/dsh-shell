@@ -209,9 +209,10 @@ export function parseQuestionAnswers(questions: readonly QuestionItem[], input: 
       // A number that matches no option must not silently produce an empty
       // answer: fall back to a custom answer with the typed text.
       if (selected.length > 0) {
-        // Multi-select questions may carry selected options AND custom text
-        // together (the host schema allows it); single-select drops the rest.
-        if (question.multiSelect === true && rest !== '') return { id: question.id, selected, custom: rest }
+        // The reference's panel attaches the focused option AND the typed
+        // text, and the host schema allows selected + custom together, so
+        // the non-numeric remainder rides along for both select modes.
+        if (rest !== '') return { id: question.id, selected, custom: rest }
         return { id: question.id, selected }
       }
     }

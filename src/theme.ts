@@ -122,9 +122,9 @@ const mistRose = fgHex('#da8a93')
 const mistAmber = fgHex('#d8b270')
 const mistGreen = fgHex('#82b89d')
 
-/** Header line: bold mist brand blue. */
+/** Header line: bold in the reference's interaction blue (remember). */
 export function headerStyle(text: string): string {
-  return bold(mistBlue(text))
+  return bold(mistShimmer(text))
 }
 
 /** User transcript rows: warm off-white, like the reference's user prompt text. */
@@ -159,8 +159,8 @@ export function contextStyle(percent: number, text: string): string {
 /** Picker panel background: the reference's dim tool-card substrate. */
 export const pickerPanelStyle = sgr('48;5;236')
 
-/** Picker title: bold mist blue, read as the panel's heading. */
-export const pickerTitleStyle = (text: string): string => bold(mistBlue(text))
+/** Picker title: bold in the reference's interaction blue (suggestion). */
+export const pickerTitleStyle = (text: string): string => bold(mistShimmer(text))
 
 /** User message bubble background (the reference's userMessageBackground
  *  #292D36). The 256-color fallback (235) stays one step apart from the tool
@@ -282,8 +282,8 @@ export const editorTheme: EditorTheme = {
     // the key is required by the theme type, so provide the styled form for
     // forwards compatibility. Attribute-specific resets keep the panel
     // background alive on rows that carry it.
-    selectedPrefix: (text: string) => bold(mistBlue(text)),
-    selectedText: (text: string) => bold(mistBlue(text)),
+    selectedPrefix: (text: string) => bold(mistShimmer(text)),
+    selectedText: (text: string) => bold(mistShimmer(text)),
     description: dim,
     scrollInfo: dim,
     noMatch: mistRose,

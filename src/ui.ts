@@ -15,6 +15,7 @@ import {
   HStack,
   Markdown,
   matchesKey,
+  truncateToWidth,
   ProcessTerminal,
   ScrollView,
   SelectList,
@@ -244,9 +245,14 @@ export class PickerFrame implements Component {
   render(width: number): string[] {
     const inner = Math.max(8, width - 4)
     const rows = this.children.flatMap((child) => child.render(inner))
-    const title = this.title.length > inner - 2 ? this.title.slice(0, inner - 2) : this.title
+    // The title may carry ANSI styling (mist-blue picker titles), so the
+    // border budget uses its visible width, never the raw code length —
+    // slicing inside an escape sequence would leak styling into the border.
+    const titleWidth = visibleLength(this.title)
+    const title = titleWidth > inner - 2 ? truncateToWidth(this.title, inner - 2) : this.title
+    const used = visibleLength(title)
     const lines: string[] = []
-    lines.push(this.style(`┌─ ${title}${'─'.repeat(Math.max(0, inner - title.length))}┐`))
+    lines.push(this.style(`┌─ ${title}${'─'.repeat(Math.max(0, inner - used))}┐`))
     for (const row of rows) {
       const pad = Math.max(0, inner - visibleLength(row))
       lines.push(this.style(`│ ${row}${' '.repeat(pad)} │`))
@@ -286,7 +292,8 @@ function rowComponent(row: TranscriptRow): Component {
     const box = new Box(1, 1, toolBoxBg)
     const dot = toolDotStyle(row.name, false)('• ')
     const title = toolTitleStyle(terminalSafeText(toolDisplayName(row.name)))
-    const args = row.args === undefined ? '' : ` ${toolOutputStyle(terminalSafeText(row.args))}`
+    // The reference's call header parenthesizes the arguments.
+    const args = row.args === undefined ? '' : ` (${toolOutputStyle(terminalSafeText(row.args))})`
     box.addChild(new Text(`${dot}${title}${args}`, 0, 0))
     return box
   }
@@ -699,11 +706,11 @@ export function statsText(attachment: AppState['attachment']): string {
   const percent = (pressureTokens / contextWindow) * 100
   // R and W gates are independent, like pi's footer: no "R0" when only cache
   // writes exist.
-  const read = cacheReadTokens > 0 ? ` ∙ R${formatTokens(cacheReadTokens)}` : ''
-  const write = cacheWriteTokens > 0 ? ` ∙ W${formatTokens(cacheWriteTokens)}` : ''
+  const read = cacheReadTokens > 0 ? ` · R${formatTokens(cacheReadTokens)}` : ''
+  const write = cacheWriteTokens > 0 ? ` · W${formatTokens(cacheWriteTokens)}` : ''
   const context = contextStyle(percent, `${percent.toFixed(1)}%/${formatTokens(contextWindow)}`)
-  // The reference's bullet operator separates the stats parts.
-  return `${footerStyle(`↑${formatTokens(uncachedInputTokens)} ∙ ↓${formatTokens(outputTokens)}${read}${write} `)}${context}`
+  // The reference's byline separates the stats parts with U+00B7.
+  return `${footerStyle(`↑${formatTokens(uncachedInputTokens)} · ↓${formatTokens(outputTokens)}${read}${write} `)}${context}`
 }
 
 /** One-line queue status: how many prompts are queued, with the first prompt's

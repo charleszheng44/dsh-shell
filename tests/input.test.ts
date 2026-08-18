@@ -279,9 +279,10 @@ test('parseQuestionAnswers: numbers, labels, and custom text', async () => {
   // the selected options (the host schema allows selected + custom).
   const mixed = parseQuestionAnswers(multi, '1, other')
   assert.deepEqual(mixed, [{ id: 'm', selected: ['a'], custom: 'other' }])
-  // Single-select questions drop the non-numeric remainder.
+  // Single-select questions keep the typed remainder alongside the option,
+  // like the reference's panel (selected + custom).
   const singleMixed = parseQuestionAnswers(single, '1, other')
-  assert.deepEqual(singleMixed, [{ id: 's', selected: ['a'] }])
+  assert.deepEqual(singleMixed, [{ id: 's', selected: ['a'], custom: 'other' }])
 })
 
 test('submission is disabled when disconnected', async () => {

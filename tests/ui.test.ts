@@ -371,7 +371,7 @@ test('statsText renders a pi-style usage line only while attached', () => {
   const text = statsText(attached)
   assert.ok(text.includes('↑226k'), text)
   assert.ok(text.includes('↓143k'), text)
-  assert.ok(text.includes('∙ R37M'), text)
+  assert.ok(text.includes('· R37M'), text)
   assert.ok(text.includes('34.7%/1.0M'), text)
   // No cache numbers -> the R/W segment is omitted.
   const noCache = {
@@ -386,7 +386,7 @@ test('statsText renders a pi-style usage line only while attached', () => {
     },
   } as never
   const bare = statsText(noCache)
-  assert.ok(bare.includes('↑100 ∙ ↓50'), bare)
+  assert.ok(bare.includes('↑100 · ↓50'), bare)
   assert.ok(!bare.includes('R'), bare)
   assert.ok(bare.includes('50.0%/1.0k'), bare)
   // Cache writes show the W segment; over-100% context stays bounded text.
@@ -402,7 +402,7 @@ test('statsText renders a pi-style usage line only while attached', () => {
     },
   } as never
   const wrote = statsText(withWrite)
-  assert.ok(wrote.includes('∙ R30 ∙ W40'), wrote)
+  assert.ok(wrote.includes('· R30 · W40'), wrote)
   assert.ok(wrote.includes('200.0%/1.0k'), wrote)
   // Writes only: no "R0" segment, exactly like pi's independent gates.
   const writesOnly = {
@@ -417,7 +417,7 @@ test('statsText renders a pi-style usage line only while attached', () => {
     },
   } as never
   const onlyWrite = statsText(writesOnly)
-  assert.ok(onlyWrite.includes('∙ W40'), onlyWrite)
+  assert.ok(onlyWrite.includes('· W40'), onlyWrite)
   assert.ok(!onlyWrite.includes('R'), onlyWrite)
   // Zero window stats are treated as missing (no line at all).
   const zeroWindow = {
