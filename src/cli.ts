@@ -141,7 +141,9 @@ export async function main(argv: readonly string[]): Promise<number> {
   })
 
   for (const signal of ['SIGINT', 'SIGTERM'] as const) {
-    const handler = (): void => { shutdown(0) }
+    // 128+N mirrors shell convention so a killed run is distinguishable from
+    // a clean Ctrl+C quit by supervisors.
+    const handler = (): void => { shutdown(signal === 'SIGINT' ? 130 : 143) }
     process.once(signal, handler)
     signalHandlers.push({ signal, handler })
   }
@@ -162,13 +164,15 @@ export async function main(argv: readonly string[]): Promise<number> {
   try {
     view.start()
     const boot = await app.boot()
-    if (!boot.ok) {
+    if (!boot.ok && !controller.signal.aborted) {
       shutdown(1)
       console.error(terminalSafeText(`dsh-tui: ${origin}: ${boot.error.message}`))
     }
   } catch (error) {
-    shutdown(1)
-    console.error(terminalSafeText(`dsh-tui: ${origin}: ${error instanceof Error ? error.message : String(error)}`))
+    if (!controller.signal.aborted) {
+      shutdown(1)
+      console.error(terminalSafeText(`dsh-tui: ${origin}: ${error instanceof Error ? error.message : String(error)}`))
+    }
   }
   const code = await exitPromise
   process.removeListener('uncaughtException', onUncaught)
