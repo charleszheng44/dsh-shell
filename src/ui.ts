@@ -9,6 +9,7 @@
 
 import { stripVTControlCharacters } from 'node:util'
 import {
+  Box,
   Container,
   Editor,
   HStack,
@@ -27,7 +28,20 @@ import {
 
 import type { AppState, AppView, ProjectRow, SessionRow, SubmitResult } from './app.js'
 import { partialSegments, type AssistantSegment, type TranscriptRow } from './transcript.js'
-import { assistantMarker, editorTheme, footerStyle, headerStyle, markdownTheme, pickerPanelStyle, userMarker, userStyle } from './theme.js'
+import {
+  assistantMarker,
+  editorTheme,
+  footerStyle,
+  headerStyle,
+  markdownTheme,
+  pickerPanelStyle,
+  toolBoxBg,
+  toolOutputStyle,
+  toolTitleStyle,
+  userBubbleBg,
+  userMarker,
+  userStyle,
+} from './theme.js'
 
 /** Safe picker label: the sanitized title (newlines collapsed so a DSH title
  *  cannot inject a row break into the SelectList), or a sanitized fallback so
@@ -233,28 +247,48 @@ export class PickerFrame implements Component {
   }
 }
 
-/** One transcript line component: user text, assistant Markdown, or a tool
- *  result block. All carry a marker in its own column (green dot for user
- *  prompts, cyan block for model rows and tool output) so markers never
+/** Number of tool-output lines previewed before the "+N more lines" note,
+ *  matching pi's fallback preview. */
+const TOOL_OUTPUT_PREVIEW_LINES = 10
+
+/** One transcript line component. User prompts render as a green dot plus a
+ *  pi-style background bubble; assistant text as a cyan block plus plain
+ *  Markdown; tool calls and results as pi-style boxed blocks (bold title,
+ *  gray bounded output). Markers live in their own column so they never
  *  interfere with Markdown parsing — a leading code fence must still be
- *  detected — and the marker columns align across rows. */
+ *  detected — and the columns align across rows. */
 function rowComponent(row: TranscriptRow): Component {
   if (row.kind === 'user') {
+    const bubble = new Box(1, 1, userBubbleBg)
+    bubble.addChild(new Text(userStyle(terminalSafeText(row.text)), 0, 0))
     return new HStack([
       { component: new Text(userMarker(), 0, 0), basis: 3, grow: 0 },
-      { component: new Text(userStyle(terminalSafeText(row.text)), 1, 0), basis: 'auto', grow: 1 },
+      { component: bubble, basis: 'auto', grow: 1 },
     ])
   }
+  if (row.kind === 'toolCall') {
+    const box = new Box(1, 1, toolBoxBg)
+    const title = new Text(toolTitleStyle(row.name), 0, 0)
+    if (row.args !== undefined) {
+      box.addChild(new HStack([
+        { component: title, basis: 'auto', grow: 0 },
+        { component: new Text(toolOutputStyle(row.args), 1, 0), basis: 'auto', grow: 1 },
+      ]))
+    } else {
+      box.addChild(title)
+    }
+    return box
+  }
   if (row.kind === 'toolResult') {
-    // Bounded tool output as a fenced code block; the fence is longer than
-    // any backtick run in the output so it cannot close early.
-    const longestRun = Math.max(0, ...(row.output.match(/`+/g)?.map((run) => run.length) ?? [0]))
-    const fence = '`'.repeat(Math.max(3, longestRun + 1))
-    const block = `${fence}\n${row.output}\n${fence}`
-    return new HStack([
-      { component: new Text(assistantMarker(), 0, 0), basis: 3, grow: 0 },
-      { component: new Markdown(terminalSafeText(block), 1, 0, markdownTheme), basis: 'auto', grow: 1 },
-    ])
+    const lines = row.output.split('\n')
+    const preview = lines.slice(0, TOOL_OUTPUT_PREVIEW_LINES)
+    const remaining = lines.length - preview.length
+    const text = remaining > 0
+      ? `${preview.join('\n')}\n… +${remaining} more lines`
+      : preview.join('\n')
+    const box = new Box(1, 1, toolBoxBg)
+    box.addChild(new Text(toolOutputStyle(text), 1, 0))
+    return box
   }
   return new HStack([
     { component: new Text(assistantMarker(), 0, 0), basis: 3, grow: 0 },

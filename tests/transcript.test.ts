@@ -150,15 +150,13 @@ test('a finalized assistant message replaces the matching partial without duplic
       { type: 'tool-call', id: 'c1', name: 'bash', arguments: '{}' },
     ]),
   ])
-  assert.equal(state.rows.length, 1)
+  assert.equal(state.rows.length, 2)
   assert.equal(state.partial, undefined)
   assert.deepEqual(state.rows[0], {
     kind: 'assistant',
-    segments: [
-      { kind: 'text', text: 'final answer' },
-      { kind: 'tool', name: 'bash' },
-    ],
+    segments: [{ kind: 'text', text: 'final answer' }],
   })
+  assert.deepEqual(state.rows[1], { kind: 'toolCall', name: 'bash' })
 })
 
 test('llm/retry clears the failed turn/step partial', () => {
@@ -355,17 +353,15 @@ test('tool-call segments carry their compacted arguments', () => {
     }]),
   ])
   assert.deepEqual(state.rows, [{
-    kind: 'assistant',
-    segments: [{ kind: 'tool', name: 'bash', args: '{"command": " ls -la ", "description": "List files"}' }],
+    kind: 'toolCall',
+    name: 'bash',
+    args: '{"command": " ls -la ", "description": "List files"}',
   }])
   // A tool-call with an empty argument object carries no args.
   const empty = projectEvents([
     assistantMessage(1, 1, 1, [{ type: 'tool-call', id: 'call-2', name: 'bash', arguments: '{}' }]),
   ])
-  assert.deepEqual(empty.rows, [{
-    kind: 'assistant',
-    segments: [{ kind: 'tool', name: 'bash' }],
-  }])
+  assert.deepEqual(empty.rows, [{ kind: 'toolCall', name: 'bash' }])
 })
 
 test('a tool/result appends a named, bounded output row', () => {
@@ -374,7 +370,7 @@ test('a tool/result appends a named, bounded output row', () => {
     toolResultEvent(2, 'call-1', 'line one\nline two\nline three'),
   ])
   assert.deepEqual(state.rows, [
-    { kind: 'assistant', segments: [{ kind: 'tool', name: 'run_code', args: '{"code":"x"}' }] },
+    { kind: 'toolCall', name: 'run_code', args: '{"code":"x"}' },
     { kind: 'toolResult', name: 'run_code', output: 'line one\nline two\nline three' },
   ])
 })
@@ -393,7 +389,7 @@ test('turn/end clears pending tool names so a late result is dropped', () => {
     toolResultEvent(3, 'call-1', 'late output'),
   ])
   assert.deepEqual(state.rows, [
-    { kind: 'assistant', segments: [{ kind: 'tool', name: 'bash', args: '{"cmd":"ls"}' }] },
+    { kind: 'toolCall', name: 'bash', args: '{"cmd":"ls"}' },
   ])
 })
 

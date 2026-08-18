@@ -23,6 +23,7 @@ export type AssistantSegment =
 export type TranscriptRow =
   | { kind: 'user'; text: string }
   | { kind: 'assistant'; segments: readonly AssistantSegment[] }
+  | { kind: 'toolCall'; name: string; args?: string }
   | { kind: 'toolResult'; name: string; output: string }
 
 /** Per-block-index accumulator inside a partial. */
@@ -105,6 +106,29 @@ function truncateOutput(text: string): string {
   return capped
 }
 
+/** Split a message's segments into text rows and standalone tool-call rows,
+ *  matching how pi and the Web UI render each tool call as its own block
+ *  between the surrounding text. */
+function rowsFromSegments(segments: readonly AssistantSegment[]): readonly TranscriptRow[] {
+  const rows: TranscriptRow[] = []
+  let textRun: AssistantSegment[] = []
+  for (const segment of segments) {
+    if (segment.kind === 'tool') {
+      if (textRun.length > 0) {
+        rows.push({ kind: 'assistant', segments: textRun })
+        textRun = []
+      }
+      rows.push(segment.args === undefined
+        ? { kind: 'toolCall', name: segment.name }
+        : { kind: 'toolCall', name: segment.name, args: segment.args })
+    } else {
+      textRun.push(segment)
+    }
+  }
+  if (textRun.length > 0) rows.push({ kind: 'assistant', segments: textRun })
+  return rows
+}
+
 /** Fold one event into the transcript state. Pure: never mutates its inputs. */
 export function applyEvent(state: TranscriptState, event: SessionEvent): TranscriptState {
   const lastSeq = Math.max(state.lastSeq, event.seq)
@@ -158,7 +182,7 @@ export function applyEvent(state: TranscriptState, event: SessionEvent): Transcr
       ...base,
       partial,
       pendingTools,
-      rows: [...state.rows, { kind: 'assistant', segments }],
+      rows: [...state.rows, ...rowsFromSegments(segments)],
     }
   }
 
