@@ -150,6 +150,7 @@ export class App {
   private state: AppState = initialState()
   private generation = 0
   private closed = false
+  private pickerRequest = 0
 
   constructor(
     private readonly port: DshPort,
@@ -175,10 +176,12 @@ export class App {
 
   /** Re-fetch both lists; a failure keeps the current rows and surfaces a notice. */
   async refreshLists(): Promise<void> {
+    if (this.closed) return
     const [workspaces, sessions] = await Promise.all([
       this.port.listWorkspaces(this.signal),
       this.port.listSessions(this.signal),
     ])
+    if (this.closed) return
     if (!workspaces.ok) {
       this.setState({ notice: workspaces.error.message })
       return
@@ -187,8 +190,14 @@ export class App {
       this.setState({ notice: sessions.error.message })
       return
     }
+    const project = this.state.selectedProject
+    const rows = project === undefined
+      ? []
+      : sessionRows(workspaces.value.items, sessions.value.items, workspaces.value.archivedSessionIds, project)
     this.setState({
       projects: projectRows(workspaces.value.items),
+      sessions: rows,
+      notice: undefined,
     })
     this.rowsCache = {
       workspaces: workspaces.value.items,
@@ -205,14 +214,18 @@ export class App {
 
   /** Ctrl+P: open the project picker (refreshes both lists first). */
   async openProjectPicker(): Promise<void> {
+    const request = ++this.pickerRequest
     await this.refreshLists()
+    if (this.closed || request !== this.pickerRequest) return
     const rows = this.state.projects
     this.view.openProjectPicker(rows, (row) => { void this.selectProject(row) }, () => this.view.closePicker())
   }
 
   /** Ctrl+S (or after a project pick): open the session picker for the current project. */
   async openSessionPicker(): Promise<void> {
+    const request = ++this.pickerRequest
     await this.refreshLists()
+    if (this.closed || request !== this.pickerRequest) return
     const project = this.state.selectedProject
     if (project === undefined) {
       this.view.openProjectPicker(this.state.projects, (row) => { void this.selectProject(row) }, () => this.view.closePicker())
@@ -229,6 +242,7 @@ export class App {
 
   /** Remember the chosen project and immediately open its session picker. */
   async selectProject(row: ProjectRow): Promise<void> {
+    if (this.closed) return
     this.view.closePicker()
     this.setState({ selectedProject: row.key })
     await this.openSessionPicker()
