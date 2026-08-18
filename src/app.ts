@@ -192,12 +192,13 @@ export function parseQuestionAnswers(questions: readonly QuestionItem[], input: 
     .map((part) => part.trim())
     .filter((part) => /^\d+$/.test(part))
     .map(Number))]
-  const rest = trimmed.split(',')
-    .map((part) => part.trim())
-    .filter((part) => part !== '' && !/^\d+$/.test(part))
-    .join(', ')
+  const parts = trimmed.split(',').map((part) => part.trim()).filter((part) => part !== '')
   return questions.map((question) => {
     const options = question.options ?? []
+    // The custom remainder is the non-numeric text plus any out-of-range
+    // numbers, so nothing typed is silently dropped.
+    const outOfRange = options.length > 0 ? numbers.filter((n) => n < 1 || n > options.length) : []
+    const rest = [...parts.filter((part) => !/^\d+$/.test(part)), ...outOfRange.map(String)].join(', ')
     if (numbers.length > 0 && options.length > 0) {
       let selected = numbers
         .filter((n) => n >= 1 && n <= options.length)
@@ -415,9 +416,10 @@ export class App {
       this.updateInbox(frame.sessionId, (entry) => {
         if (entry.questions.some((question) => question.rpcId === pending.rpcId)) return entry
         // Bound the pending list like MAX_BUFFERED_EVENTS: the host settles
-        // sequentially, so more than a handful of open asks is a flood.
+        // sequentially — it waits on the OLDEST ask — so a flood must keep
+        // the oldest entries, or the early asks become unreachable.
         const questions = [...entry.questions, pending]
-        return { ...entry, questions: questions.slice(-MAX_PENDING_QUESTIONS) }
+        return { ...entry, questions: questions.slice(0, MAX_PENDING_QUESTIONS) }
       })
       return
     }
