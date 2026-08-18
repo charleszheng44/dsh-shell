@@ -311,6 +311,7 @@ export class App {
         lastSeq: next.lastSeq,
         transcript: next.rows,
         partial: next.partial,
+        pendingTools: next.pendingTools,
       },
     })
   }

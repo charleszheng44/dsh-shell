@@ -403,6 +403,55 @@ test('history prefix plus live suffix stitches one transcript', async () => {
   }
 })
 
+test('live tool/result folds into a named output row after a tool-call message', async () => {
+  const port = new FakePort()
+  port.historyEvents = { s1: [userText(1, 'q')] }
+  const { app, view } = await booted(port)
+  await app.attach('s1' as never)
+  // The pendingTools map is populated by the live assistant/message and must
+  // survive into the next live fold so the tool/result can be named.
+  port.push(sessionFrame('s1', {
+    type: 'assistant/message',
+    seq: 2,
+    time: 0,
+    surfaceOp: 'append',
+    data: {
+      turn: 0,
+      step: 0,
+      message: {
+        id: 'm2',
+        role: 'assistant',
+        content: [{ type: 'tool-call', id: 'call-1', name: 'run_code', arguments: '{"code":"x"}' }],
+        source: { kind: 'model', provider: 'p' },
+      },
+    },
+  } as never))
+  port.push(sessionFrame('s1', {
+    type: 'tool/result',
+    seq: 3,
+    time: 0,
+    data: {
+      turn: 0,
+      step: 0,
+      message: {
+        source: { kind: 'tool', callId: 'call-1' },
+        content: [{ type: 'tool-result', toolCallId: 'call-1', content: [{ type: 'text', text: 'out' }] }],
+      },
+    },
+  } as never))
+  await new Promise((resolve) => setTimeout(resolve, 10))
+  const last = view.renders.at(-1)
+  assert.equal(last?.attachment.phase, 'attached')
+  if (last?.attachment.phase === 'attached') {
+    assert.equal(last.attachment.lastSeq, 3)
+    assert.deepEqual(last.attachment.transcript, [
+      { kind: 'user', text: 'q' },
+      { kind: 'toolCall', name: 'run_code', args: '{"code":"x"}' },
+      { kind: 'toolResult', name: 'run_code', output: 'out' },
+    ])
+  }
+})
+
 test('stream end marks disconnected', async () => {
   const port = new FakePort()
   port.historyEvents = { s1: [userText(1, 'q')] }
