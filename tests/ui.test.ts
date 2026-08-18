@@ -8,7 +8,7 @@ import { test } from 'node:test'
 
 import { Container, Markdown, getCapabilities, setCapabilities } from '@earendil-works/pi-tui'
 
-import { assistantMarkdown, editorTextAfterSubmit, headerText, neutralizeLinks, pickerLabel, reconcileRows, sessionPickerItems, terminalSafeText } from '../src/ui.js'
+import { assistantMarkdown, editorPolicy, editorTextAfterSubmit, headerText, neutralizeLinks, pickerLabel, reconcileRows, sessionPickerItems, terminalSafeText } from '../src/ui.js'
 import type { TranscriptRow } from '../src/transcript.js'
 
 const identity = (text: string): string => text
@@ -361,4 +361,29 @@ test('editorTextAfterSubmit clears on acceptance and retains on rejection', () =
   assert.equal(editorTextAfterSubmit({ ok: false, reason: 'slash-command' }, '/cmd'), '/cmd')
   assert.equal(editorTextAfterSubmit({ ok: false, reason: 'blank' }, '   '), '   ')
   assert.equal(editorTextAfterSubmit({ ok: false, reason: 'stale' }, 'old draft'), '')
+})
+
+test('editorPolicy enables input only for a connected attached session', () => {
+  const attached = { connection: 'connected', attachment: { phase: 'attached', sending: false } } as never
+  const policy = editorPolicy(attached, false)
+  assert.equal(policy.enabled, true)
+  assert.equal(policy.disableSubmit, false)
+  assert.equal(policy.focusEditor, true)
+  assert.equal(policy.clearText, false)
+  // An open picker overlay must not steal focus from the selection.
+  assert.equal(editorPolicy(attached, true).focusEditor, false)
+  assert.equal(editorPolicy(attached, true).enabled, true)
+  // An in-flight submission disables Enter.
+  const sending = editorPolicy({ connection: 'connected', attachment: { phase: 'attached', sending: true } } as never, false)
+  assert.equal(sending.disableSubmit, true)
+  assert.equal(sending.enabled, true)
+  // Disconnected or unattached: disabled, cleared, unfocused.
+  const disconnected = editorPolicy({ connection: 'disconnected', attachment: { phase: 'none' } } as never, false)
+  assert.equal(disconnected.enabled, false)
+  assert.equal(disconnected.disableSubmit, true)
+  assert.equal(disconnected.clearText, true)
+  assert.equal(disconnected.focusEditor, false)
+  const loading = editorPolicy({ connection: 'connected', attachment: { phase: 'loading', buffered: [] } } as never, false)
+  assert.equal(loading.enabled, false)
+  assert.equal(loading.clearText, true)
 })

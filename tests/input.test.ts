@@ -224,3 +224,79 @@ test('the accepted notice is not cleared by a replacement user/message', async (
   await new Promise((resolve) => setTimeout(resolve, 20))
   assert.equal(view.renders.at(-1)?.notice, 'Accepted by DSH')
 })
+
+test('the accepted notice does not stick when the echo beats the response', async () => {
+  const port = new FakePort()
+  const { app, view } = await booted(port)
+  await attach(app, port)
+  let release!: (value: Awaited<ReturnType<DshPort['prompt']>>) => void
+  port.prompt = () => new Promise((resolve) => { release = resolve })
+  const pending = app.submit('hello')
+  // The echo streams back while the unary is still in flight.
+  port.push({ type: 'session/event', sessionId: 's1', event: userText(2, 'hello') } as never)
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  release({ ok: true, value: { accepted: true } })
+  const result = await pending
+  assert.deepEqual(result, { ok: true })
+  // The echo already cleared the marker: no stuck accepted notice.
+  assert.equal(view.renders.at(-1)?.notice, undefined)
+})
+
+test('a late echo cannot wipe a rejection error notice', async () => {
+  const port = new FakePort()
+  const { app, view } = await booted(port)
+  await attach(app, port)
+  let release!: (value: Awaited<ReturnType<DshPort['prompt']>>) => void
+  port.prompt = () => new Promise((resolve) => { release = resolve })
+  const pending = app.submit('hello')
+  release({ ok: false, error: { code: 'internal', message: 'boom', details: {} } })
+  assert.deepEqual(await pending, { ok: false, reason: 'rejected', error: 'boom' })
+  assert.equal(view.renders.at(-1)?.notice, 'boom')
+  // A late echo from the rejected attempt must not clear the error notice.
+  port.push({ type: 'session/event', sessionId: 's1', event: userText(2, 'hello') } as never)
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  assert.equal(view.renders.at(-1)?.notice, 'boom')
+})
+
+test('a disconnect while a submission is in flight returns stale and keeps the notice', async () => {
+  const port = new FakePort()
+  const { app, view } = await booted(port)
+  await attach(app, port)
+  let release!: (value: Awaited<ReturnType<DshPort['prompt']>>) => void
+  port.prompt = () => new Promise((resolve) => { release = resolve })
+  const pending = app.submit('hello')
+  port.push({ type: 'stream/error', error: { code: 'internal', message: 'x', details: {} } } as never)
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  release({ ok: true, value: { accepted: true } })
+  const result = await pending
+  assert.deepEqual(result, { ok: false, reason: 'stale' })
+  const last = view.renders.at(-1)
+  assert.equal(last?.connection, 'disconnected')
+  assert.match(last?.notice ?? '', /Disconnected/)
+  // The in-flight flag is cleared on the same-generation attachment.
+  if (last?.attachment.phase === 'attached') {
+    assert.equal(last.attachment.sending, false)
+  }
+})
+
+test('a stale result cannot unwedge a newer attachment in flight', async () => {
+  const port = new FakePort()
+  const { app, view } = await booted(port)
+  await attach(app, port)
+  const held: Array<(value: Awaited<ReturnType<DshPort['prompt']>>) => void> = []
+  port.prompt = () => new Promise((resolve) => { held.push(resolve) })
+  const first = app.submit('on s1')
+  await app.attach('s2' as never)
+  const second = app.submit('on s2')
+  // The first call resolves after the switch: its stale result must not
+  // clear the newer attachment's in-flight flag.
+  held[0]?.({ ok: true, value: { accepted: true } })
+  assert.deepEqual(await first, { ok: false, reason: 'stale' })
+  const during = view.renders.at(-1)
+  if (during?.attachment.phase === 'attached') {
+    assert.equal(during.attachment.sending, true, 'newer attachment must stay sending')
+  }
+  held[1]?.({ ok: true, value: { accepted: true } })
+  assert.deepEqual(await second, { ok: true })
+  assert.equal(view.renders.at(-1)?.attachment.phase, 'attached')
+})

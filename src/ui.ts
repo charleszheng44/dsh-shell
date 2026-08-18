@@ -268,8 +268,14 @@ export class TerminalView implements AppView {
       this.editor.disableSubmit = true // guard reentry
       void this.onSubmit(text).then((result) => {
         // pi clears the buffer before onSubmit; keep or restore the editor
-        // text per the design (accepted clears, rejected retains).
-        this.editor.setText(editorTextAfterSubmit(result, text))
+        // text per the design (accepted clears, rejected retains). Restore
+        // only when the user has not typed a new draft while the call was in
+        // flight, and sanitize at the display edge (the wire copy stays
+        // verbatim; the restored text is the user's own, but pasted C1
+        // controls must not render raw in the buffer).
+        if (this.editor.getText() === '') {
+          this.editor.setText(terminalSafeText(editorTextAfterSubmit(result, text)))
+        }
         // The App renders the notice; re-enable for the next attempt.
         this.editor.disableSubmit = !this.editorEnabled
       })
@@ -303,17 +309,13 @@ export class TerminalView implements AppView {
   render(state: AppState): void {
     this.header.setText(headerText(state))
     this.renderTranscript(state.attachment)
-    // Enable submission only for a connected, attached session, and focus
-    // the editor so typed characters reach it — but never steal focus from
-    // an open picker overlay (live frames arrive while pickers are up).
-    this.editorEnabled = state.connection === 'connected'
-      && state.attachment.phase === 'attached'
-    const sending = state.attachment.phase === 'attached' && state.attachment.sending
-    this.editor.disableSubmit = !this.editorEnabled || sending
-    if (!this.editorEnabled) {
+    const policy = editorPolicy(state, this.overlay !== undefined)
+    this.editorEnabled = policy.enabled
+    this.editor.disableSubmit = policy.disableSubmit
+    if (policy.clearText) {
       this.editor.setText('')
       this.tui.setFocus(null)
-    } else if (this.overlay === undefined) {
+    } else if (policy.focusEditor) {
       this.tui.setFocus(this.editor)
     }
     this.tui.requestRender()
@@ -437,6 +439,26 @@ export function editorTextAfterSubmit(result: SubmitResult, submitted: string): 
   if (result.ok) return ''
   if (result.reason === 'stale') return ''
   return submitted
+}
+
+/** Editor policy for one render. The editor is enabled only for a connected,
+ *  attached session; submission is additionally disabled while a call is in
+ *  flight; focus moves to the editor only when no picker overlay is open
+ *  (live frames must not steal focus while the user is selecting); and the
+ *  text is cleared whenever the editor is disabled. */
+export function editorPolicy(
+  state: AppState,
+  overlayOpen: boolean,
+): { enabled: boolean; disableSubmit: boolean; focusEditor: boolean; clearText: boolean } {
+  const enabled = state.connection === 'connected'
+    && state.attachment.phase === 'attached'
+  const sending = state.attachment.phase === 'attached' && state.attachment.sending
+  return {
+    enabled,
+    disableSubmit: !enabled || sending,
+    focusEditor: enabled && !overlayOpen,
+    clearText: !enabled,
+  }
 }
 
 /** Status header: project / session / connection, with the notice appended. */

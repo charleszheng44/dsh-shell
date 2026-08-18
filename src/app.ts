@@ -503,6 +503,10 @@ export class App {
     }
     const generation = attachment.generation
     const sessionId = attachment.sessionId
+    // Arm the accepted-notice marker before the call: the prompt's own
+    // user/message echo can arrive on the mux while the unary is still in
+    // flight, and the echo must clear the notice regardless of ordering.
+    this.pendingAccepted = generation
     this.setState({ attachment: { ...attachment, sending: true } })
     const result = await this.port.prompt(sessionId, text, this.signal)
     // A switch, shutdown, or disconnect while in flight: drop the late result
@@ -513,23 +517,31 @@ export class App {
       || current.phase !== 'attached'
       || current.generation !== generation
       || current.sessionId !== sessionId) {
-      // Clear the in-flight flag so the stale result cannot wedge sending.
-      if (current.phase === 'attached') {
+      // Clear the in-flight flag only when the attachment is still this one:
+      // a newer attachment's in-flight submission must not be unwedged by a
+      // late result from an older generation.
+      if (current.phase === 'attached' && current.generation === generation) {
         this.setState({ attachment: { ...current, sending: false } })
       }
+      if (this.pendingAccepted === generation) this.pendingAccepted = undefined
       return { ok: false, reason: 'stale' }
     }
     this.setState({ attachment: { ...current, sending: false } })
     if (!result.ok) {
+      // Disarm so a late echo from this attempt cannot wipe the error notice.
+      if (this.pendingAccepted === generation) this.pendingAccepted = undefined
       this.setState({ notice: result.error.message })
       return { ok: false, reason: 'rejected', error: result.error.message }
     }
     // The design doc's prompt-submission flow: show a transient accepted
     // notice and never append a transcript row (the logged user/message
     // event on the mux stream renders the prompt itself). The notice clears
-    // when that echo arrives, even if it beats the unary response.
-    this.pendingAccepted = generation
-    this.setState({ notice: 'Accepted by DSH' })
+    // when that echo arrives; if the echo already arrived (it can beat the
+    // unary response) it cleared the marker and the notice, so do not show
+    // it again.
+    if (this.pendingAccepted === generation) {
+      this.setState({ notice: 'Accepted by DSH' })
+    }
     return { ok: true }
   }
 
