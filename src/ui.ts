@@ -29,6 +29,12 @@ import {
 import type { AppState, AppView, ProjectRow, SessionRow } from './app.js'
 import { partialSegments, type TranscriptRow } from './transcript.js'
 
+/** Safe picker label: the sanitized title, or a sanitized fallback so Pi's
+ *  label || value render never exposes the raw DSH id/key. */
+export function pickerLabel(title: string, fallback: string): string {
+  return terminalSafeText(title) || fallback
+}
+
 /**
  * Make any DSH-derived string safe for terminal display: normalize CRLF and
  * bare CR to LF, strip ANSI/VT control sequences, then remove every remaining
@@ -191,10 +197,15 @@ export class TerminalView implements AppView {
   }
 
   openProjectPicker(rows: readonly ProjectRow[], onSelect: (row: ProjectRow) => void, onCancel: () => void): void {
-    const items: SelectItem[] = rows.map((row) => ({
-      value: String(row.key),
-      label: terminalSafeText(row.title),
-    }))
+    const items: SelectItem[] = rows.map((row) => {
+      // Pi renders label || value; a title that sanitizes to empty must not
+      // fall back to the raw DSH key, so provide a sanitized fallback label.
+      const fallback = String(row.key) === 'all' ? 'All sessions' : 'Workspace'
+      return {
+        value: String(row.key),
+        label: pickerLabel(row.title, fallback),
+      }
+    })
     this.showPicker(items, (item) => {
       const row = rows.find((candidate) => String(candidate.key) === item.value)
       if (row !== undefined) onSelect(row)
@@ -211,7 +222,9 @@ export class TerminalView implements AppView {
     }
     const items: SelectItem[] = rows.map((row) => ({
       value: String(row.sessionId),
-      label: terminalSafeText(row.title),
+      // Pi renders label || value; a title that sanitizes to empty must not
+      // fall back to the raw DSH session id.
+      label: pickerLabel(row.title, 'Session'),
     }))
     this.showPicker(items, (item) => {
       const row = rows.find((candidate) => String(candidate.sessionId) === item.value)

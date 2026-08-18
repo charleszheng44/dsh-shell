@@ -8,7 +8,7 @@ import { test } from 'node:test'
 
 import { Markdown } from '@earendil-works/pi-tui'
 
-import { terminalSafeText } from '../src/ui.js'
+import { pickerLabel, terminalSafeText } from '../src/ui.js'
 
 const identity = (text: string): string => text
 const markdownTheme = {
@@ -86,4 +86,10 @@ test('fixed-width fenced Markdown renders through Pi without control chars', () 
 
 test('empty string stays empty', () => {
   assert.equal(terminalSafeText(''), '')
+})
+
+test('pickerLabel never falls back to a raw DSH value when the title sanitizes to empty', () => {
+  assert.equal(pickerLabel('ok title', 'Workspace'), 'ok title')
+  assert.equal(pickerLabel('\x1b[31m\x1b[0m', 'Session'), 'Session')
+  assert.equal(pickerLabel('', 'All sessions'), 'All sessions')
 })
