@@ -168,7 +168,9 @@ export class TerminalView implements AppView {
   }
 
   start(): void {
-    this.tui.setFocus(this.editor)
+    // PR 2 is read-only: keep focus off the editor so typed characters never
+    // land in a disabled input whose content would be silently discarded.
+    this.tui.setFocus(null)
     this.tui.start()
   }
 
