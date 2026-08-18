@@ -218,6 +218,17 @@ export function terminalSafeText(text: string): string {
   )
 }
 
+/** Truncate by visible columns, iterating code points so a CJK title is
+ *  cut at a character boundary instead of overflowing the frame. */
+function truncateByVisibleWidth(text: string, max: number): string {
+  let result = ''
+  for (const ch of text) {
+    if (visibleWidth(result + ch) > max) break
+    result += ch
+  }
+  return result
+}
+
 /** Bordered, titled panel around a picker list so the overlay reads as a
  *  separate panel instead of mixing with the transcript text. Keyboard input
  *  is delegated to the wrapped component (the SelectList owns selection).
@@ -248,7 +259,7 @@ export class PickerFrame implements Component {
     // Truncation falls back to the unstyled text: pi's truncateToWidth would
     // append a full reset that kills the panel background on the border.
     const plain = this.title.replace(/\x1b\[[0-9;]*m/g, '')
-    const title = visibleWidth(plain) > inner - 2 ? plain.slice(0, Math.max(0, inner - 2)) : this.title
+    const title = visibleWidth(plain) > inner - 2 ? truncateByVisibleWidth(plain, inner - 2) : this.title
     const used = visibleWidth(title)
     // A child (the SelectList) truncates long labels with a full reset that
     // would kill the panel background for the row's padding and border;

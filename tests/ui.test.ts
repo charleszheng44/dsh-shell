@@ -6,7 +6,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { Container, Markdown, getCapabilities, setCapabilities } from '@earendil-works/pi-tui'
+import { Container, Markdown, getCapabilities, setCapabilities, visibleWidth as visibleWidthOf } from '@earendil-works/pi-tui'
 
 import { PickerFrame, assistantMarkdown, deepDivingText, editorPolicy, editorTextAfterSubmit, footerHints, formatTokens, headerText, isWorking, neutralizeLinks, pickerLabel, questionCardText, queuedText, reconcileRows, sessionPickerItems, statsText, terminalSafeText, toolPreviewText } from '../src/ui.js'
 import type { TranscriptRow } from '../src/transcript.js'
@@ -699,6 +699,12 @@ test('PickerFrame budgets a styled title by visible width', () => {
   const cjkLine = cjk.render(40)[0] ?? ''
   assert.equal(cjkLine.endsWith('┐'), true)
   assert.ok(cjkLine.endsWith('─┐'), cjkLine)
+  // A CJK title too wide for the frame truncates at a character boundary
+  // and still fits (no JS-char slice can overflow).
+  const longCjk = new PickerFrame('选择会话并开始一个很长的标题', identity)
+  const narrowLine = longCjk.render(20)[0] ?? ''
+  assert.equal(narrowLine.endsWith('┐'), true)
+  assert.ok(visibleWidthOf(narrowLine) <= 20, narrowLine)
   // A child row carrying a full reset (pi's truncation) keeps the panel
   // background through its padding and border.
   const truncated = new PickerFrame('x', panel)

@@ -279,6 +279,8 @@ test('parseQuestionAnswers: numbers, labels, and custom text', async () => {
   assert.deepEqual(parseQuestionAnswers(multi, '1, 9, other'), [{ id: 'm', selected: ['a'], custom: 'other, 9' }])
   // Trailing commas and zero are tolerated (zero is out of range).
   assert.deepEqual(parseQuestionAnswers(single, '0,'), [{ id: 's', selected: [], custom: '0,' }])
+  // Non-numeric parts dedupe like the numeric ones.
+  assert.deepEqual(parseQuestionAnswers(multi, '1, x, x'), [{ id: 'm', selected: ['a'], custom: 'x' }])
   // Mixed input on a multi-select question keeps the custom text alongside
   // the selected options (the host schema allows selected + custom).
   const mixed = parseQuestionAnswers(multi, '1, other')

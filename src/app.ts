@@ -198,7 +198,7 @@ export function parseQuestionAnswers(questions: readonly QuestionItem[], input: 
     // The custom remainder is the non-numeric text plus any out-of-range
     // numbers, so nothing typed is silently dropped.
     const outOfRange = options.length > 0 ? numbers.filter((n) => n < 1 || n > options.length) : []
-    const rest = [...parts.filter((part) => !/^\d+$/.test(part)), ...outOfRange.map(String)].join(', ')
+    const rest = [...new Set(parts.filter((part) => !/^\d+$/.test(part))), ...outOfRange.map(String)].join(', ')
     if (numbers.length > 0 && options.length > 0) {
       let selected = numbers
         .filter((n) => n >= 1 && n <= options.length)
