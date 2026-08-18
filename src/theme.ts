@@ -39,6 +39,13 @@ export function userStyle(text: string): string {
   return fgGreen(text)
 }
 
+/** Assistant response marker: a cyan block that prefixes model rows and the
+ *  in-flight partial, chat-style. Rendered in its own component so it never
+ *  interferes with Markdown parsing (e.g. a leading code fence). */
+export function assistantMarker(): string {
+  return fgCyan('▍ ')
+}
+
 /** Footer hint line: dim. */
 export function footerStyle(text: string): string {
   return dim(text)

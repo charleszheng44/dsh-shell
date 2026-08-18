@@ -11,6 +11,7 @@ import { stripVTControlCharacters } from 'node:util'
 import {
   Container,
   Editor,
+  HStack,
   Markdown,
   matchesKey,
   ProcessTerminal,
@@ -26,7 +27,7 @@ import {
 
 import type { AppState, AppView, ProjectRow, SessionRow, SubmitResult } from './app.js'
 import { partialSegments, type AssistantSegment, type TranscriptRow } from './transcript.js'
-import { editorTheme, footerStyle, headerStyle, markdownTheme, pickerPanelStyle, userStyle } from './theme.js'
+import { assistantMarker, editorTheme, footerStyle, headerStyle, markdownTheme, pickerPanelStyle, userStyle } from './theme.js'
 
 /** Safe picker label: the sanitized title (newlines collapsed so a DSH title
  *  cannot inject a row break into the SelectList), or a sanitized fallback so
@@ -37,15 +38,17 @@ export function pickerLabel(title: string, fallback: string): string {
 }
 
 /** Assemble one assistant row's segments into a single Markdown document.
- *  Tool markers and images render as plain lines; the caller sanitizes.
- *  Link destinations are neutralized so Pi's Markdown never emits an OSC 8
- *  hyperlink carrying a DSH-controlled URL. */
+ *  Tool markers and images render as distinct lines; the caller sanitizes.
+ *  Tool names are wrapped in backticks so they render as code (styled and
+ *  never parsed as link text), and link destinations are neutralized so
+ *  Pi's Markdown never emits an OSC 8 hyperlink carrying a DSH-controlled
+ *  URL. */
 export function assistantMarkdown(segments: readonly AssistantSegment[]): string {
   const joined = segments
     .map((segment) => segment.kind === 'text'
       ? segment.text
       : segment.kind === 'tool'
-        ? `Tool: ${segment.name}`
+        ? `Tool: \`${segment.name}\``
         : '[image]')
     .join('\n\n')
   // Strip control characters BEFORE link neutralization: a control byte
@@ -242,6 +245,10 @@ export class TerminalView implements AppView {
   private readonly tui = new TuiAltScreen(this.terminal)
   private readonly transcript = new Container()
   private readonly partial = new Markdown('', 1, 0, markdownTheme)
+  private readonly partialRow = new HStack([
+    { component: new Text(assistantMarker(), 0, 0), basis: 'auto', grow: 0 },
+    { component: this.partial, basis: 'auto', grow: 1 },
+  ])
   private readonly header = new Text('', 1, 0)
   private readonly editor = new Editor(this.tui, editorTheme, { paddingX: 1 })
   private overlay: OverlayHandle | undefined
@@ -340,14 +347,15 @@ export class TerminalView implements AppView {
     const rows = attachment.phase === 'attached' ? attachment.transcript : []
     reconcileRows(this.transcript, this.rowCache, rows)
     // The live partial updates in place (single Markdown component) and stays
-    // the last child, after every finalized row.
+    // the last child, after every finalized row; the assistant marker column
+    // is added only while there is in-flight content to show.
+    this.transcript.removeChild(this.partialRow)
     if (attachment.phase === 'attached' && attachment.partial !== undefined) {
       this.partial.setText(terminalSafeText(assistantMarkdown(partialSegments(attachment.partial))))
+      this.transcript.addChild(this.partialRow)
     } else {
       this.partial.setText('')
     }
-    this.transcript.removeChild(this.partial)
-    this.transcript.addChild(this.partial)
   }
 
   openProjectPicker(rows: readonly ProjectRow[], onSelect: (row: ProjectRow) => void, onCancel: () => void): void {
