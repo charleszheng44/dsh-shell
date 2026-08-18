@@ -731,7 +731,7 @@ function promptPreview(item: QueuedInboxItem): string {
 export function footerHints(attachment: AppState['attachment']): string {
   const question = attachment.phase === 'attached' && attachment.pendingQuestions.length > 0
   return footerStyle(question
-    ? 'Ctrl+P project  Ctrl+S session  Ctrl+C quit\nAnswer the question: a number picks an option, any text answers'
+    ? 'Ctrl+P project  Ctrl+S session  Ctrl+C quit\nAnswer: a number picks an option, commas pick several, any text answers'
     : 'Ctrl+P project  Ctrl+S session  Ctrl+C quit\nEnter send · ↑ history · Approvals and questions: use Web UI')
 }
 

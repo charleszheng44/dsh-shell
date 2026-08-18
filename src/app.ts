@@ -413,7 +413,10 @@ export class App {
       }
       this.updateInbox(frame.sessionId, (entry) => {
         if (entry.questions.some((question) => question.rpcId === pending.rpcId)) return entry
-        return { ...entry, questions: [...entry.questions, pending] }
+        // Bound the pending list like MAX_BUFFERED_EVENTS: the host settles
+        // sequentially, so more than a handful of open asks is a flood.
+        const questions = [...entry.questions, pending]
+        return { ...entry, questions: questions.slice(-MAX_PENDING_QUESTIONS) }
       })
       return
     }
@@ -879,6 +882,10 @@ export const STREAM_READY_TIMEOUT_MS = 10_000
 /** Upper bound on events buffered while history loads (a history round-trip
  *  needs only the frames between the request and its response). */
 const MAX_BUFFERED_EVENTS = 10_000
+
+/** Upper bound on open question requests held per session (a flood of
+ *  question/requested frames must not grow the inbox without limit). */
+const MAX_PENDING_QUESTIONS = 16
 
 /** Submit outcome: accepted, or a reason (with the safe error when rejected). */
 export type SubmitResult =

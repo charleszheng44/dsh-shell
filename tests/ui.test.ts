@@ -489,7 +489,7 @@ test('footerHints switches to answering mode while a question is open', () => {
   assert.ok(footerHints({ phase: 'none' } as never).includes('Enter send'))
   assert.ok(footerHints({ phase: 'attached', pendingQuestions: [] } as never).includes('Enter send'))
   const answering = footerHints({ phase: 'attached', pendingQuestions: [{ rpcId: 'r', questions: [] }] } as never)
-  assert.ok(answering.includes('Answer the question'), answering)
+  assert.ok(answering.includes('Answer:'), answering)
   assert.ok(!answering.includes('Enter send'), answering)
 })
 

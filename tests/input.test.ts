@@ -210,6 +210,33 @@ test('a pending question routes the composer to answering instead of prompting',
   assert.equal(after?.phase === 'attached' && after.pendingQuestions.length, 0)
 })
 
+test('the Answered notice does not stick when the resolve frame beats the receipt', async () => {
+  const port = new FakePort()
+  port.historyEvents = { s1: [] }
+  const { app, view } = await booted(port)
+  await app.attach('s1' as never)
+  port.push({ type: 'question/requested', sessionId: 's1' as never, rpcId: 'rpc-race', questions: [
+    { id: 'qa', question: 'Approve?' },
+  ] } as never)
+  await flush()
+  // Gate the respond so the host's resolve can arrive first.
+  let releaseRespond: (() => void) | undefined
+  const original = port.respond.bind(port)
+  port.respond = async (message) => {
+    await new Promise<void>((resolve) => { releaseRespond = resolve })
+    return original(message)
+  }
+  const submitting = app.submit('yes')
+  await flush()
+  port.push({ type: 'question/resolved', sessionId: 's1' as never, questionRpcId: 'rpc-race', outcome: 'answered' } as never)
+  await flush()
+  releaseRespond?.()
+  await submitting
+  await flush()
+  const last = view.renders.at(-1)
+  assert.notEqual(last?.notice, 'Answered', 'no sticky notice when resolved arrived first')
+})
+
 test('parseQuestionAnswers: numbers, labels, and custom text', async () => {
   const questions = [
     { id: 'q1', question: 'Pick', options: [{ label: 'alpha' }, { label: 'beta' }, { label: 'gamma' }] },

@@ -567,6 +567,21 @@ test('session/queue frames drive the attached queue snapshot', async () => {
   assert.equal(drained?.phase === 'attached' && drained.queue.length, 0)
 })
 
+test('a flood of question/requested frames is bounded per session', async () => {
+  const port = new FakePort()
+  port.historyEvents = { s1: [] }
+  const { app, view } = await booted(port)
+  await app.attach('s1' as never)
+  for (let i = 0; i < 30; i += 1) {
+    port.push({ type: 'question/requested', sessionId: 's1' as never, rpcId: `rpc-${i}`, questions: [
+      { id: `qa-${i}`, question: `Q${i}` },
+    ] } as never)
+  }
+  await flush()
+  const attached = view.renders.at(-1)?.attachment
+  assert.equal(attached?.phase === 'attached' && attached.pendingQuestions.length, 16)
+})
+
 test('queue and question frames that arrive before attach seed the attachment', async () => {
   const port = new FakePort()
   port.historyEvents = { s1: [] }
