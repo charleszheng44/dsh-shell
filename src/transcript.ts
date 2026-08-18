@@ -53,10 +53,13 @@ export interface TranscriptState {
    *  names so a later tool/result can name its output row. Cleared at
    *  turn/end once every result of the turn has arrived. */
   pendingTools: Readonly<Record<string, string>>
+  /** The open turn's number (turn/start seen, no matching turn/end yet): the
+   *  view shows the Deep diving status while the session is working. */
+  turnActive: number | undefined
 }
 
 export function emptyTranscript(): TranscriptState {
-  return { rows: [], partial: undefined, lastSeq: -1, pendingTools: {} }
+  return { rows: [], partial: undefined, lastSeq: -1, pendingTools: {}, turnActive: undefined }
 }
 
 /** Visible segments of a partial in block-index order. */
@@ -149,14 +152,20 @@ export function applyEvent(state: TranscriptState, event: SessionEvent): Transcr
     return applyChunk(base, event.data.turn, event.data.step, event.data.chunk)
   }
 
+  if (event.type === 'turn/start') {
+    // A turn opened: the view shows the Deep diving status until its end.
+    return { ...base, turnActive: event.data.turn }
+  }
+
   if (event.type === 'turn/end') {
     // A turn that ended without a finalized assistant/message (error, abort,
     // or empty turn) must not leave abandoned partial text beside later rows.
     // Every tool result of the turn has arrived by now, so the id map clears.
+    const turnActive = state.turnActive === event.data.turn ? undefined : state.turnActive
     if (state.partial !== undefined && state.partial.turn === event.data.turn) {
-      return { ...base, partial: undefined, pendingTools: {} }
+      return { ...base, partial: undefined, pendingTools: {}, turnActive }
     }
-    return { ...base, pendingTools: {} }
+    return { ...base, pendingTools: {}, turnActive }
   }
 
   if (event.type === 'assistant/message') {

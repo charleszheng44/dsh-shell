@@ -452,6 +452,23 @@ test('live tool/result folds into a named output row after a tool-call message',
   }
 })
 
+test('live turn/start and turn/end drive the working flag', async () => {
+  const port = new FakePort()
+  port.historyEvents = { s1: [userText(1, 'q')] }
+  const { app, view } = await booted(port)
+  await app.attach('s1' as never)
+  const idle = view.renders.at(-1)?.attachment
+  assert.equal(idle?.phase === 'attached' && idle.turnActive, undefined)
+  port.push(sessionFrame('s1', { type: 'turn/start', seq: 2, time: 0, data: { turn: 0 } } as never))
+  await flush()
+  const opened = view.renders.at(-1)?.attachment
+  assert.equal(opened?.phase === 'attached' && opened.turnActive, 0)
+  port.push(sessionFrame('s1', { type: 'turn/end', seq: 3, time: 0, data: { turn: 0, reason: { kind: 'stop' } } } as never))
+  await flush()
+  const closed = view.renders.at(-1)?.attachment
+  assert.equal(closed?.phase === 'attached' && closed.turnActive, undefined)
+})
+
 test('stream end marks disconnected', async () => {
   const port = new FakePort()
   port.historyEvents = { s1: [userText(1, 'q')] }

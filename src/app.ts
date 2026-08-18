@@ -56,6 +56,9 @@ export type AttachmentState =
       sending: boolean
       /** Tool-call ids seen in this attachment, mapped to their names. */
       pendingTools: Readonly<Record<string, string>>
+      /** The open turn's number on this attachment; the view shows the Deep
+       *  diving status while a turn is running. */
+      turnActive: number | undefined
     }
 
 /** Complete UI state, rendered by the view on every change. */
@@ -302,6 +305,7 @@ export class App {
         partial: attachment.partial,
         lastSeq: attachment.lastSeq,
         pendingTools: attachment.pendingTools,
+        turnActive: attachment.turnActive,
       },
       frame.event,
     )
@@ -312,6 +316,7 @@ export class App {
         transcript: next.rows,
         partial: next.partial,
         pendingTools: next.pendingTools,
+        turnActive: next.turnActive,
       },
     })
   }
@@ -452,6 +457,7 @@ export class App {
     let transcript = projected.rows
     let partial = projected.partial
     let pendingTools = projected.pendingTools
+    let turnActive = projected.turnActive
     for (const event of buffered) {
       if (event.seq <= lastSeq) continue
       if (event.seq !== lastSeq + 1) {
@@ -462,11 +468,12 @@ export class App {
         })
         return
       }
-      const next = applyEvent({ rows: transcript, partial, lastSeq, pendingTools }, event)
+      const next = applyEvent({ rows: transcript, partial, lastSeq, pendingTools, turnActive }, event)
       lastSeq = next.lastSeq
       transcript = next.rows
       partial = next.partial
       pendingTools = next.pendingTools
+      turnActive = next.turnActive
     }
     // The connection may have died while history was loading (gap, stream
     // end, stream/error, flood): do not claim a live attachment or clear
@@ -485,6 +492,7 @@ export class App {
         partial,
         sending: false,
         pendingTools,
+        turnActive,
       },
       notice: undefined,
     })

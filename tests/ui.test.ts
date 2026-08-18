@@ -8,7 +8,7 @@ import { test } from 'node:test'
 
 import { Container, Markdown, getCapabilities, setCapabilities } from '@earendil-works/pi-tui'
 
-import { PickerFrame, assistantMarkdown, editorPolicy, editorTextAfterSubmit, headerText, neutralizeLinks, pickerLabel, reconcileRows, sessionPickerItems, terminalSafeText } from '../src/ui.js'
+import { PickerFrame, assistantMarkdown, deepDivingText, editorPolicy, editorTextAfterSubmit, headerText, isWorking, neutralizeLinks, pickerLabel, reconcileRows, sessionPickerItems, terminalSafeText, toolPreviewText } from '../src/ui.js'
 import type { TranscriptRow } from '../src/transcript.js'
 
 const identity = (text: string): string => text
@@ -407,4 +407,45 @@ test('PickerFrame renders a titled border around its children', () => {
   styled.addChild({ render: () => ['\x1b[1;36mselected\x1b[0m'] } as never)
   const styledLines = styled.render(20)
   assert.ok(styledLines[1]?.endsWith(' │'), 'ANSI-styled row is padded by visible width')
+})
+
+test('deepDivingText cycles 0-3 dots and clamps', () => {
+  assert.equal(deepDivingText(0), 'Deep diving')
+  assert.equal(deepDivingText(1), 'Deep diving.')
+  assert.equal(deepDivingText(2), 'Deep diving..')
+  assert.equal(deepDivingText(3), 'Deep diving...')
+  assert.equal(deepDivingText(4), 'Deep diving...')
+  assert.equal(deepDivingText(-1), 'Deep diving')
+})
+
+test('isWorking is true only for an attached session with activity', () => {
+  const base = {
+    connection: 'connected',
+    attachment: { phase: 'attached', sending: false, turnActive: undefined },
+  } as never
+  assert.equal(isWorking(base), false)
+  const sending = {
+    connection: 'connected',
+    attachment: { phase: 'attached', sending: true, turnActive: undefined },
+  } as never
+  assert.equal(isWorking(sending), true)
+  const openTurn = {
+    connection: 'connected',
+    attachment: { phase: 'attached', sending: false, turnActive: 3 },
+  } as never
+  assert.equal(isWorking(openTurn), true)
+  // Loading, none, and disconnected attachments are never working.
+  assert.equal(isWorking({ connection: 'connected', attachment: { phase: 'loading', buffered: [] } } as never), false)
+  assert.equal(isWorking({ connection: 'connected', attachment: { phase: 'none' } } as never), false)
+  assert.equal(isWorking({ connection: 'disconnected', attachment: { phase: 'attached', sending: true, turnActive: 3 } } as never), false)
+})
+
+test('toolPreviewText shows 10 lines, a +N note, and names truncation', () => {
+  const short = Array.from({ length: 10 }, (_, i) => `line ${i + 1}`).join('\n')
+  assert.equal(toolPreviewText(short), short)
+  const eleven = `${short}\nline 11`
+  assert.equal(toolPreviewText(eleven), `${short}\n… +1 more lines`)
+  // A projector-truncated output (>24 lines + marker) keeps the marker visible.
+  const many = Array.from({ length: 24 }, (_, i) => `l${i}`).join('\n') + '\n… (output truncated)'
+  assert.equal(toolPreviewText(many), `${Array.from({ length: 10 }, (_, i) => `l${i}`).join('\n')}\n… +14 more lines (output truncated)`)
 })

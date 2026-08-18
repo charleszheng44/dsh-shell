@@ -32,8 +32,9 @@ function hexToRgb(hex: string): [number, number, number] {
   return [(value >> 16) & 0xff, (value >> 8) & 0xff, value & 0xff]
 }
 
-/** Closest xterm 256-color index (the 6x6x6 cube, or the grayscale ramp
- *  when the color is near-neutral — mirroring pi's matcher). */
+/** Closest xterm 256-color index: the 6x6x6 cube, or the grayscale ramp
+ *  when the color is near-neutral (the ramp step for a mean m is
+ *  8 + 10k, so the nearest step is k = round((m - 8) / 10)). */
 function to256([r, g, b]: [number, number, number]): number {
   const ramp = [0, 95, 135, 175, 215, 255]
   const nearest = (v: number): number => {
@@ -47,7 +48,9 @@ function to256([r, g, b]: [number, number, number]): number {
   const mean = Math.round((r + g + b) / 3)
   const cubeDist = Math.abs(r - (ramp[nearest(r)] ?? 0)) + Math.abs(g - (ramp[nearest(g)] ?? 0)) + Math.abs(b - (ramp[nearest(b)] ?? 0))
   const grayDist = Math.abs(r - mean) + Math.abs(g - mean) + Math.abs(b - mean)
-  return cubeDist <= grayDist ? cubeIndex : 232 + Math.round(mean / 10)
+  // Clamp to the ramp's last step (255): a near-white gray like #ececec would
+  // otherwise map to 256, an invalid SGR index.
+  return cubeDist <= grayDist ? cubeIndex : 232 + Math.min(23, Math.max(0, Math.round((mean - 8) / 10)))
 }
 
 /** Foreground style for a hex color (truecolor when the terminal supports it). */
@@ -78,7 +81,10 @@ const piTeal = fgHex('#8abeb7')
 const piLinkBlue = fgHex('#81a2be')
 const piGreen = fgHex('#b5bd68')
 const piGray = fgHex('#808080')
+const piDimGray = fgHex('#666666')
 const piText = fgHex('#d4d4d4')
+// The Web UI's Deep diving turn status is the brand blue.
+const piBlue = fgHex('#4276e6')
 
 /** Header line: bold bright cyan. */
 export function headerStyle(text: string): string {
@@ -116,8 +122,12 @@ export const pickerPanelStyle = sgr('48;5;236')
  *  render in a subtle bubble like the pi coding agent. */
 export const userBubbleBg = bgHex('#343541')
 
-/** Tool block background (pi's toolPendingBg #282832) for call and result boxes. */
+/** Tool block background (pi's toolPendingBg #282832) for call boxes. */
 export const toolBoxBg = bgHex('#282832')
+
+/** Tool result background (pi's toolSuccessBg #283228): a finished result
+ *  shifts to the success tint, like the pi coding agent. */
+export const toolResultBoxBg = bgHex('#283228')
 
 /** Tool title: pi renders the tool name bold in the default text color. */
 export const toolTitleStyle = (text: string): string => bold(piText(text))
@@ -125,13 +135,16 @@ export const toolTitleStyle = (text: string): string => bold(piText(text))
 /** Tool output: pi renders tool results in gray (muted). */
 export const toolOutputStyle = (text: string): string => piGray(text)
 
+/** Working status ("Deep diving...", the Web UI's brand blue, bold). */
+export const workingStyle = (text: string): string => bold(piBlue(text))
+
 /** Assistant Markdown in pi's dark palette: gold headings, teal code and list
  *  bullets, blue links, green code blocks, gray quotes — readable on the
  *  default terminal background. */
 export const markdownTheme: MarkdownTheme = {
   heading: piGold,
   link: (text: string) => underline(piLinkBlue(text)),
-  linkUrl: piGray,
+  linkUrl: piDimGray,
   code: piTeal,
   codeBlock: piGreen,
   codeBlockBorder: piGray,

@@ -37,10 +37,12 @@ import {
   pickerPanelStyle,
   toolBoxBg,
   toolOutputStyle,
+  toolResultBoxBg,
   toolTitleStyle,
   userBubbleBg,
   userMarker,
   userStyle,
+  workingStyle,
 } from './theme.js'
 
 /** Safe picker label: the sanitized title (newlines collapsed so a DSH title
@@ -256,7 +258,9 @@ const TOOL_OUTPUT_PREVIEW_LINES = 10
  *  Markdown; tool calls and results as pi-style boxed blocks (bold title,
  *  gray bounded output). Markers live in their own column so they never
  *  interfere with Markdown parsing — a leading code fence must still be
- *  detected — and the columns align across rows. */
+ *  detected — and the columns align across rows. Tool names, arguments, and
+ *  outputs are host- or model-controlled text, so they pass through
+ *  terminalSafeText like every other DSH-derived string. */
 function rowComponent(row: TranscriptRow): Component {
   if (row.kind === 'user') {
     const bubble = new Box(1, 1, userBubbleBg)
@@ -268,11 +272,11 @@ function rowComponent(row: TranscriptRow): Component {
   }
   if (row.kind === 'toolCall') {
     const box = new Box(1, 1, toolBoxBg)
-    const title = new Text(toolTitleStyle(row.name), 0, 0)
+    const title = new Text(toolTitleStyle(terminalSafeText(row.name)), 0, 0)
     if (row.args !== undefined) {
       box.addChild(new HStack([
         { component: title, basis: 'auto', grow: 0 },
-        { component: new Text(toolOutputStyle(row.args), 1, 0), basis: 'auto', grow: 1 },
+        { component: new Text(toolOutputStyle(terminalSafeText(row.args)), 1, 0), basis: 'auto', grow: 1 },
       ]))
     } else {
       box.addChild(title)
@@ -280,20 +284,29 @@ function rowComponent(row: TranscriptRow): Component {
     return box
   }
   if (row.kind === 'toolResult') {
-    const lines = row.output.split('\n')
-    const preview = lines.slice(0, TOOL_OUTPUT_PREVIEW_LINES)
-    const remaining = lines.length - preview.length
-    const text = remaining > 0
-      ? `${preview.join('\n')}\n… +${remaining} more lines`
-      : preview.join('\n')
-    const box = new Box(1, 1, toolBoxBg)
-    box.addChild(new Text(toolOutputStyle(text), 1, 0))
+    const box = new Box(1, 1, toolResultBoxBg)
+    box.addChild(new Text(toolOutputStyle(terminalSafeText(toolPreviewText(row.output))), 0, 0))
     return box
   }
   return new HStack([
     { component: new Text(assistantMarker(), 0, 0), basis: 3, grow: 0 },
     { component: new Markdown(terminalSafeText(assistantMarkdown(row.segments)), 1, 0, markdownTheme), basis: 'auto', grow: 1 },
   ])
+}
+
+/** Bounded tool-output preview: pi shows the first 10 lines of a result with
+ *  a "+N more lines" note. When the output itself was truncated by the
+ *  projector, the note names the truncation so the bound is not hidden. */
+export function toolPreviewText(output: string): string {
+  const lines = output.split('\n')
+  const truncated = lines.at(-1) === '… (output truncated)'
+  const body = truncated ? lines.slice(0, -1) : lines
+  const preview = body.slice(0, TOOL_OUTPUT_PREVIEW_LINES)
+  const remaining = body.length - preview.length
+  if (remaining === 0) return preview.join('\n')
+  return truncated
+    ? `${preview.join('\n')}\n… +${remaining} more lines (output truncated)`
+    : `${preview.join('\n')}\n… +${remaining} more lines`
 }
 
 /** Terminal view: owns the Pi TUI, renders AppState, and shows pickers. */
@@ -307,6 +320,9 @@ export class TerminalView implements AppView {
     { component: this.partial, basis: 'auto', grow: 1 },
   ])
   private readonly header = new Text('', 1, 0)
+  /** "Deep diving..." turn-status line; an empty Text renders zero rows, so
+   *  the layout keeps its slot without stealing a line while idle. */
+  private readonly working = new Text('', 0, 0)
   private readonly editor = new Editor(this.tui, editorTheme, { paddingX: 1 })
   private overlay: OverlayHandle | undefined
 
@@ -334,6 +350,7 @@ export class TerminalView implements AppView {
     this.tui.setLayoutRoot(
       new VStack([
         { component: this.header, basis: 'auto', grow: 0, minSize: 1 },
+        { component: this.working, basis: 'auto', grow: 0 },
         { component: scroll, basis: 0, grow: 1, minSize: 1 },
         { component: editorRow, basis: 'auto', grow: 0, minSize: 1 },
       ]),
@@ -350,6 +367,9 @@ export class TerminalView implements AppView {
         if (this.editor.getText() === '') {
           this.editor.setText(terminalSafeText(editorTextAfterSubmit(result, text)))
         }
+        // A prompt that ran joins the up-arrow recall history (pi trims and
+        // dedupes consecutive repeats). Rejected submissions stay out.
+        if (result.ok) this.editor.addToHistory(text)
         // The App renders the notice; re-enable for the next attempt.
         this.editor.disableSubmit = !this.editorEnabled
       })
@@ -380,6 +400,12 @@ export class TerminalView implements AppView {
 
   private editorEnabled = false
 
+  /** Animation state for the Deep diving status: the dots cycle 0-3 on a
+   *  timer so the line visibly "flashes" while the session is working. */
+  private workingDots = 0
+  private workingActive = false
+  private workingTimer: ReturnType<typeof setInterval> | undefined
+
   render(state: AppState): void {
     this.header.setText(headerStyle(headerText(state)))
     this.renderTranscript(state.attachment)
@@ -394,6 +420,18 @@ export class TerminalView implements AppView {
     } else if (policy.focusEditor) {
       this.tui.setFocus(this.editor)
     }
+    this.workingActive = isWorking(state)
+    if (this.workingActive && this.workingTimer === undefined) {
+      this.workingTimer = setInterval(() => {
+        this.workingDots = (this.workingDots + 1) % 4
+        this.working.setText(workingStyle(deepDivingText(this.workingDots)))
+        this.tui.requestRender()
+      }, 400)
+    } else if (!this.workingActive && this.workingTimer !== undefined) {
+      clearInterval(this.workingTimer)
+      this.workingTimer = undefined
+    }
+    this.working.setText(this.workingActive ? workingStyle(deepDivingText(this.workingDots)) : '')
     this.tui.requestRender()
   }
 
@@ -472,9 +510,28 @@ export class TerminalView implements AppView {
   }
 
   stop(): void {
+    if (this.workingTimer !== undefined) {
+      clearInterval(this.workingTimer)
+      this.workingTimer = undefined
+    }
     this.tui.stop()
   }
 
+}
+
+/** The Web UI's turn status text with 0-3 trailing dots; the cycling is the
+ *  terminal's stand-in for the Web shimmer animation. */
+export function deepDivingText(dots: number): string {
+  return `Deep diving${'.'.repeat(Math.max(0, Math.min(3, dots)))}`
+}
+
+/** Whether a turn is in flight for the attached session: our prompt call is
+ *  still being admitted, or a turn/start has been seen without its turn/end.
+ *  Drives the Deep diving status line. */
+export function isWorking(state: AppState): boolean {
+  return state.connection === 'connected'
+    && state.attachment.phase === 'attached'
+    && (state.attachment.sending || state.attachment.turnActive !== undefined)
 }
 
 /** Reconcile the transcript's row cache with a row list: dropped rows have

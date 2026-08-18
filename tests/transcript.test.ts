@@ -243,6 +243,28 @@ test('turn/end for a different turn leaves the partial intact', () => {
   assert.deepEqual(partialSegments(state.partial as never), [{ kind: 'text', text: 'kept' }])
 })
 
+test('turn/start opens the working flag and turn/end closes it', () => {
+  const idle = projectEvents([userMessage(1, { text: 'q' })])
+  assert.equal(idle.turnActive, undefined)
+  const opened = projectEvents([
+    userMessage(1, { text: 'q' }),
+    { type: 'turn/start', seq: 2, time: 0, data: { turn: 0 } } as never,
+  ])
+  assert.equal(opened.turnActive, 0)
+  const closed = projectEvents([
+    userMessage(1, { text: 'q' }),
+    { type: 'turn/start', seq: 2, time: 0, data: { turn: 0 } } as never,
+    { type: 'turn/end', seq: 3, time: 0, data: { turn: 0, reason: { kind: 'stop' } } } as never,
+  ])
+  assert.equal(closed.turnActive, undefined)
+  // A turn/end for a different turn must not close the open one.
+  const otherTurn = projectEvents([
+    { type: 'turn/start', seq: 1, time: 0, data: { turn: 0 } } as never,
+    { type: 'turn/end', seq: 2, time: 0, data: { turn: 9, reason: { kind: 'stop' } } } as never,
+  ])
+  assert.equal(otherTurn.turnActive, 0)
+})
+
 test('an empty or image-only user message renders no row', () => {
   const empty = projectEvents([userMessage(1, { text: '' })])
   assert.equal(empty.rows.length, 0)
