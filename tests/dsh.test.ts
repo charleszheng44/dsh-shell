@@ -16,6 +16,7 @@ function stubClient(overrides: {
   host?: Partial<PortClient['host']>
   workspace?: Partial<PortClient['workspace']>
   sessions?: Partial<PortClient['sessions']>
+  events?: Partial<PortClient['events']>
 } = {}): PortClient {
   const base: PortClient = {
     host: {
@@ -28,11 +29,15 @@ function stubClient(overrides: {
       list: async () => ok({ items: [] }),
       history: async () => ok({ events: [], hasMore: false }),
     },
+    events: {
+      mux: async function* mux() { return },
+    },
   }
   return {
     host: { ...base.host, ...overrides.host },
     workspace: { ...base.workspace, ...overrides.workspace },
     sessions: { ...base.sessions, ...overrides.sessions },
+    events: { ...base.events, ...overrides.events },
   }
 }
 
@@ -137,4 +142,55 @@ test('NodeApiClient resolves unary URLs against the explicit origin', async () =
   }
   assert.equal(requested.length, 1)
   assert.ok(requested[0]?.startsWith('http://127.0.0.1:3080/api/host.describe'))
+})
+
+test('NodeApiClient mux stream opens, yields frames, and abort closes the socket', async (t) => {
+  const { createServer } = await import('node:http')
+  const { createHash } = await import('node:crypto')
+  const { server, port } = await new Promise<{ server: import('node:http').Server; port: number }>((resolve) => {
+    const srv = createServer()
+    srv.on('upgrade', (req, socket) => {
+      const key = req.headers['sec-websocket-key']
+      if (typeof key !== 'string') { socket.destroy(); return }
+      const accept = createHash('sha1').update(`${key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`).digest('base64')
+      socket.write('HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ' + accept + '\r\n\r\n')
+      const payload = JSON.stringify({ type: 'server-request', rpcId: 'r1', method: 'events.mux', payload: { type: 'session/subscribed', sessionId: 's1', lastSeq: 0 } })
+      const frame = Buffer.alloc(payload.length >= 126 ? 4 + payload.length : 2 + payload.length)
+      frame[0] = 0x81
+      if (payload.length >= 126) {
+        frame[1] = 0x7e
+        frame.writeUInt16BE(payload.length, 2)
+        frame.write(payload, 4)
+      } else {
+        frame[1] = payload.length
+        frame.write(payload, 2)
+      }
+      socket.write(frame)
+      socket.on('data', (chunk: Buffer) => {
+        const first = chunk[0]
+        if (chunk.length >= 2 && first !== undefined && (first & 0x0f) === 0x8) {
+          socket.write(Buffer.from([0x88, 0x00]))
+          socket.end()
+        }
+      })
+    })
+    srv.listen(0, '127.0.0.1', () => resolve({ server: srv, port: (srv.address() as { port: number }).port }))
+  })
+  t.after(() => { server.close() })
+
+  const client = new NodeApiClient(new URL(`http://127.0.0.1:${port}`))
+  const abort = new AbortController()
+  let opened = false
+  const frames: string[] = []
+  const pump = (async () => {
+    for await (const frame of client.events.mux({}, abort.signal, () => { opened = true })) {
+      frames.push(frame.payload.type)
+    }
+  })()
+  // Wait for the frame and onOpen via the event loop.
+  await new Promise((resolve) => setTimeout(resolve, 200))
+  assert.equal(opened, true)
+  assert.deepEqual(frames, ['session/subscribed'])
+  abort.abort()
+  await pump
 })

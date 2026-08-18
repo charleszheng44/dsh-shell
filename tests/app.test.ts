@@ -109,6 +109,15 @@ class FakePort implements DshPort {
     }
     return { ok: true, value: { events: events.map((event) => ({ event })), hasMore: false } }
   }
+
+  // Minimal stream stub so the fake satisfies the widened DshPort; the
+  // streaming tests live with the app commit that follows.
+  async *stream(signal: AbortSignal, onOpen: () => void): AsyncIterable<never> {
+    onOpen()
+    await new Promise<void>(() => {
+      signal.addEventListener('abort', () => undefined, { once: true })
+    })
+  }
 }
 
 import type { SessionEvent } from '@deepseek-ai/dsh-session/types'

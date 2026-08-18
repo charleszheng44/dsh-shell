@@ -15,15 +15,19 @@
  * deepseek-harness publishes that field.
  */
 
-import { AbstractApiClient } from '@deepseek-ai/dsh-host-apiproxy/client'
+import { AbstractApiClient, type IApiClient } from '@deepseek-ai/dsh-host-apiproxy/client'
 import {
+  serverRequestSchema,
   transportError,
   type RpcResponse,
+  type RpcRequest,
   type RpcResult,
   type ResponseValue,
 } from '@deepseek-ai/dsh-host-apiproxy/api'
+import { muxFrameSchema } from '@deepseek-ai/dsh-host-apiproxy/api/events.schema'
 import type {
   HistoryEntry,
+  MuxFrame,
   SessionSummary,
   WorkspaceView,
 } from '@deepseek-ai/dsh-host-apiproxy/api'
@@ -46,6 +50,8 @@ export interface DshPort {
     events: HistoryEntry[]
     hasMore: boolean
   }>>
+  /** Live mux stream: yields stripped MuxFrames once the socket is open. */
+  stream(signal: AbortSignal, onOpen: () => void): AsyncIterable<MuxFrame>
 }
 
 /** One unary call folded into the RpcResult error branch on any transport failure. */
@@ -77,6 +83,9 @@ export interface PortClient {
       hasMore: boolean
     }>>
   }
+  events: {
+    mux(payload: MuxPayload, signal: AbortSignal, onOpen?: () => void): AsyncIterable<RpcRequest<MuxFrame>>
+  }
 }
 
 /** Direct adapter: DshPort over the published client, folding transport errors. */
@@ -86,13 +95,21 @@ export function createDshPort(client: PortClient): DshPort {
     listWorkspaces: (signal) => unary(() => client.workspace.list({}, signal)),
     listSessions: (signal) => unary(() => client.sessions.list({}, signal)),
     loadHistory: (sessionId, signal) => unary(() => client.sessions.history({ sessionId }, signal)),
+    async *stream(signal, onOpen) {
+      // Strip the RPC envelope from every mux frame; stream errors surface as
+      // the iterable ending, which the app treats as disconnected.
+      for await (const frame of client.events.mux({}, signal, onOpen)) {
+        yield frame.payload
+      }
+    },
   }
 }
 
 /**
- * Node transport bound to one explicit origin. doFetch uses the global fetch,
- * so unary calls work without any browser global; the WebSocket downlink
- * reader for mux/host streams lands with PR 3's stream widening.
+ * Node transport bound to one explicit origin. doFetch uses the global fetch;
+ * mux/host streams use the global WebSocket with a downlink reader that
+ * mirrors the browser client's. Aborting the caller's signal closes the
+ * socket, so shutdown needs no forced exit or timeout.
  */
 export class NodeApiClient extends AbstractApiClient {
   constructor(private readonly origin: URL) {
@@ -106,4 +123,77 @@ export class NodeApiClient extends AbstractApiClient {
   protected doFetch(input: URL, init?: RequestInit): Promise<Response> {
     return globalThis.fetch(input, init)
   }
+
+  protected override openMux(
+    _payload: MuxPayload,
+    signal: AbortSignal,
+    onOpen?: () => void,
+  ): AsyncIterable<RpcRequest<MuxFrame>> {
+    return this.readWebSocket('/api/events.mux', signal, muxFrameSchema, onOpen)
+  }
+
+  private async *readWebSocket<F extends MuxFrame>(
+    path: string,
+    signal: AbortSignal,
+    frameSchema: { parse(value: unknown): F },
+    onOpen?: () => void,
+  ): AsyncGenerator<RpcRequest<F>> {
+    const url = new URL(path, this.resolveBase())
+    url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+    const socket = new WebSocket(url)
+    const inbox: Array<{ kind: 'frame'; envelope: RpcRequest<F> } | { kind: 'end' }> = []
+    let wake: (() => void) | undefined
+    const enqueue = (item: { kind: 'frame'; envelope: RpcRequest<F> } | { kind: 'end' }): void => {
+      inbox.push(item)
+      wake?.()
+      wake = undefined
+    }
+    const handleOpen = (): void => { onOpen?.() }
+    const handleMessage = (event: MessageEvent): void => {
+      let frame: F
+      try {
+        if (typeof event.data !== 'string') throw new Error('binary WebSocket frame')
+        const full = serverRequestSchema.parse(JSON.parse(event.data))
+        frame = frameSchema.parse(full.payload)
+        this.onEnvelope(full)
+        enqueue({ kind: 'frame', envelope: { rpcId: full.rpcId, payload: frame } })
+      } catch (error) {
+        // DSH-derived bytes must not reach the raw-mode terminal, even in a
+        // diagnostic: log a static message only.
+        console.error(`[dsh-tui] dropping malformed WebSocket frame on ${path}`)
+      }
+    }
+    const handleClose = (): void => { enqueue({ kind: 'end' }) }
+    const handleAbort = (): void => {
+      if (socket.readyState === WebSocket.CONNECTING || socket.readyState === WebSocket.OPEN) {
+        socket.close()
+      }
+    }
+    socket.addEventListener('open', handleOpen)
+    socket.addEventListener('message', handleMessage)
+    socket.addEventListener('close', handleClose, { once: true })
+    signal.addEventListener('abort', handleAbort, { once: true })
+    if (signal.aborted) handleAbort()
+    try {
+      while (true) {
+        while (inbox.length > 0) {
+          const item = inbox.shift() as { kind: 'frame'; envelope: RpcRequest<F> } | { kind: 'end' }
+          if (item.kind === 'end') return
+          yield item.envelope
+        }
+        await new Promise<void>((resolve) => { wake = resolve })
+      }
+    } finally {
+      signal.removeEventListener('abort', handleAbort)
+      socket.removeEventListener('open', handleOpen)
+      socket.removeEventListener('message', handleMessage)
+      socket.removeEventListener('close', handleClose)
+      handleAbort()
+    }
+  }
 }
+
+/** The published events API shape used to type openMux/openHost payloads. */
+type ApiProxyEvents = NonNullable<IApiClient['events']>
+// The mux payload the published client takes directly (not RpcRequest-wrapped).
+type MuxPayload = Parameters<ApiProxyEvents['mux']>[0]
