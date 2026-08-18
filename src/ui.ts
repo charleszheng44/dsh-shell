@@ -201,6 +201,13 @@ export class TerminalView implements AppView {
   }
 
   openSessionPicker(rows: readonly SessionRow[], onSelect: (row: SessionRow) => void, onCancel: () => void): void {
+    if (rows.length === 0) {
+      // Design: an empty project remains selectable and shows a notice; it
+      // never creates a session, and Enter on the notice just closes.
+      const items: SelectItem[] = [{ value: '', label: 'No attachable sessions' }]
+      this.showPicker(items, () => undefined, onCancel)
+      return
+    }
     const items: SelectItem[] = rows.map((row) => ({
       value: String(row.sessionId),
       label: terminalSafeText(row.title),
