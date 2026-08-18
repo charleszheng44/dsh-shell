@@ -118,6 +118,69 @@ test('neutralizeLinks tracks fence parity exactly', () => {
   assert.ok(!out.includes('[link](https://y)'))
 })
 
+test('neutralizeLinks breaks cross-line labels, paren URLs, and reference pairs', () => {
+  // [foo] with the destination on the next line: the label stays literal
+  // and the URL is broken, so marked cannot form the link.
+  const crossLine = neutralizeLinks('[foo]\n(https://evil.example/x)')
+  assert.ok(crossLine.includes('[foo]'), 'label brackets stay untouched')
+  assert.ok(!crossLine.includes('(https://evil.example/x)'), 'paren URL must be broken')
+  assert.ok(crossLine.includes('\u200B'), 'URL must be broken with a zero-width space')
+  // A bare URL in parentheses autolinks too; it must be broken as well.
+  assert.ok(!neutralizeLinks('(https://evil.example/x)').includes('(https://'))
+  // Adjacent parenthesized URLs are each broken, not swallowed by one match.
+  const adjacent = neutralizeLinks('(https://a.com)(https://b.com)')
+  assert.equal((adjacent.match(/\u200B/g) ?? []).length, 2)
+  assert.ok(!adjacent.includes('(https://b.com)'))
+  // Reference definitions and uses must not survive as link syntax.
+  const ref = neutralizeLinks('[ref][1]\n[1]: https://evil.example/x')
+  assert.ok(!ref.includes('https://evil.example'))
+})
+
+test('neutralizeLinks breaks URLs anywhere and covers ftp and loose emails', () => {
+  // marked autolinks bare URLs with no boundary requirement: any preceding
+  // character (colons, quotes, fullwidth parens) must not shelter the URL.
+  for (const text of [
+    'see:https://evil.example/x',
+    '参考：https://evil.example/x',
+    '"https://evil.example/x"',
+    '（https://evil.example/x）',
+    '【https://evil.example/x】',
+    '>ftp://evil.example/x',
+  ]) {
+    const out = neutralizeLinks(text)
+    assert.ok(out.includes('\u200B'), `URL not broken in ${JSON.stringify(text)}: ${out}`)
+  }
+  // ftp: is autolinked by marked and must be broken like http(s).
+  assert.ok(!neutralizeLinks('ftp://evil.example/x').includes('ftp://evil'))
+  // marked's email coverage is looser than a strict TLD rule.
+  assert.ok(!neutralizeLinks('evil@example.c').includes('evil@example.c'))
+  assert.ok(!neutralizeLinks('evil@exam_ple.com').includes('evil@exam_ple.com'))
+})
+
+test('neutralizeLinks leaves inline code spans untouched', () => {
+  // marked renders code spans verbatim and code content cannot become a link.
+  const out = neutralizeLinks('use `arr[0]` and [ok](https://x.com)')
+  assert.ok(out.includes('`arr[0]`'), 'code-span brackets must not be escaped')
+  assert.ok(out.includes('ok (h'), 'inline links outside code are still converted')
+  assert.ok(!out.includes('](https://x.com)'))
+  // URLs inside code spans are code, not links: nothing to break.
+  const codeUrl = neutralizeLinks('see `https://x.com` now')
+  assert.ok(!codeUrl.includes('\u200B'))
+  assert.ok(codeUrl.includes('`https://x.com`'))
+})
+
+test('neutralizeLinks neutralizes text an unterminated code span would shelter', () => {
+  // Unbalanced backticks: marked never closes the span, so the text is plain.
+  const unclosed = neutralizeLinks('`unclosed https://evil.example/x')
+  assert.ok(unclosed.includes('\u200B'), 'unterminated code text must be neutralized')
+  const odd = neutralizeLinks('`a` ` b https://evil.example/x')
+  assert.ok(odd.includes('\u200B'))
+  // A backtick fence whose info string contains backticks is not a fence to
+  // marked; the line must not be sheltered.
+  const badFence = neutralizeLinks('```code``` and https://evil.example/x')
+  assert.ok(badFence.includes('\u200B'), 'invalid fence opener must not shelter the URL')
+})
+
 test('assistantMarkdown neutralizes links before Pi renders them', () => {
   const out = assistantMarkdown([{ kind: 'text', text: 'click [here](https://evil.example)' }])
   assert.ok(!out.includes('](https://evil.example)'))
@@ -138,6 +201,17 @@ test('Pi renders no OSC 8 hyperlink for any DSH link form', () => {
       'mailto:evil@example.com',
       '[titled](https://evil.example/x "title")',
       'multi [a](https://x) and [b](https://y)',
+      '[a [b]](https://evil.example/x)',
+      '[foo]\n(https://evil.example/x)',
+      '[foo]\n(https://evil.example/x "title")',
+      '(https://evil.example/x)',
+      '(https://a.com)(https://b.com)',
+      '[ref][1]\n[1]: https://evil.example/x',
+      'see `https://evil.example/x` and `arr[0]` now',
+      'see:https://evil.example/x',
+      'ftp://evil.example/x',
+      'evil@example.c',
+      '`unclosed https://evil.example/x',
     ]
     for (const text of forms) {
       const markdown = new Markdown(terminalSafeText(assistantMarkdown([{ kind: 'text', text }])), 1, 0, markdownTheme as never)

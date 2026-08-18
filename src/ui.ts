@@ -38,9 +38,11 @@ export function pickerLabel(title: string, fallback: string): string {
 }
 
 /** Assemble one assistant row's segments into a single Markdown document.
- *  Tool markers and images render as plain lines; the caller sanitizes.
- *  Link destinations are neutralized so Pi's Markdown never emits an OSC 8
- *  hyperlink carrying a DSH-controlled URL. */
+ *  Tool markers and images render as plain lines. The text is sanitized
+ *  before link neutralization (a control byte smuggled into a URL scheme
+ *  must not survive to the renderer), and link destinations are neutralized
+ *  so Pi's Markdown never emits an OSC 8 hyperlink carrying a DSH-controlled
+ *  URL. */
 export function assistantMarkdown(segments: readonly AssistantSegment[]): string {
   const joined = segments
     .map((segment) => segment.kind === 'text'
@@ -49,7 +51,7 @@ export function assistantMarkdown(segments: readonly AssistantSegment[]): string
         ? `Tool: ${segment.name}`
         : '[image]')
     .join('\n\n')
-  return neutralizeLinks(joined)
+  return neutralizeLinks(terminalSafeText(joined))
 }
 
 /** Break autolinking of one URL/email token so Pi's Markdown (marked) cannot
@@ -61,7 +63,7 @@ function breakAutolink(token: string): string {
   if (token.startsWith('mailto:')) {
     return `mail\u200Bto:${breakEmail(token.slice('mailto:'.length))}`
   }
-  if (/^(https?:\/\/|www\.)/i.test(token)) {
+  if (/^(https?|ftp):\/\/|www\./i.test(token)) {
     return `${token[0]}\u200B${token.slice(1)}`
   }
   return breakEmail(token)
@@ -76,30 +78,78 @@ function breakEmail(token: string): string {
   return `${token.slice(0, at + 1)}\u200B${token.slice(at + 1)}`
 }
 
+/** Neutralize one plain (non-code) chunk of a line: convert inline links to
+ *  "text (url)", break <url> autolinks, bare URLs (http/https/ftp/mailto/
+ *  www, anywhere — marked needs no boundary), and bare emails (matching
+ *  marked's looser coverage: one-character TLDs and underscores in domains).
+ *  The URL token stops at ")" so adjacent parenthesized URLs are each broken
+ *  instead of one greedy match swallowing both. */
+function neutralizeChunk(chunk: string): string {
+  let out = chunk
+  out = out.replace(
+    /!?\[((?:[^\[\]]|\[[^\]]*\])*)\]\(<?([^)>\s]*)>?(?:\s+"[^"]*")?\)/g,
+    (_match, text: string, url: string) => `${text} (${breakAutolink(url)})`,
+  )
+  out = out.replace(/<([^<>\s]+)>/g, (_match, target: string) => breakAutolink(target))
+  out = out.replace(/((?:https?|ftp):\/\/|mailto:|www\.)[^\s<)]+/gi, (url: string) => breakAutolink(url))
+  out = out.replace(/([A-Za-z0-9._%+-]+@[A-Za-z0-9._-]+\.[A-Za-z0-9]+)/g, (email: string) => breakEmail(email))
+  return out
+}
+
 /** Neutralize every link form so no href reaches the terminal: [text](url),
- *  ![alt](url), <url> autolinks, bare URLs, and bare emails. Inside fenced
- *  code blocks links are code and stay untouched; fence state tracks the
- *  opening marker exactly. */
+ *  ![alt](url), <url> autolinks, bare URLs, and bare emails. Cross-line
+ *  labels ([foo] then (url)) and reference-style pairs are closed URL-side:
+ *  marked cannot form the link once the destination is broken, so brackets
+ *  stay untouched and render literally. Inside fenced code blocks and inline
+ *  code spans links are code and stay untouched; fence state tracks the
+ *  opening marker exactly, and an unterminated inline code span is plain
+ *  text again (marked never closes it, so it must be neutralized). */
 export function neutralizeLinks(markdown: string): string {
   const lines = markdown.split('\n')
   let fence: string | undefined
   return lines.map((line) => {
-    const fenceMatch = line.match(/^\s*(```+|~~~+)/)
-    if (fenceMatch !== null) {
-      const marker = fenceMatch[1] ?? ''
-      if (fence === undefined) fence = marker
-      else if (marker === fence) fence = undefined
-      return line
+    const fenceMatch = line.match(/^ {0,3}(```+|~~~+)/)
+    if (fenceMatch !== null && fenceMatch[1] !== undefined) {
+      const marker = fenceMatch[1]
+      // CommonMark: a backtick fence's info string may not contain
+      // backticks; marked rejects such openers and treats the line as
+      // text, so must we, or the "fence" would shelter a live URL.
+      const char = marker[0] ?? ''
+      const info = line.slice(fenceMatch[0].length)
+      if (char !== '`' || !info.includes('`')) {
+        if (fence === undefined) fence = marker
+        else if (marker === fence) fence = undefined
+        return line
+      }
     }
     if (fence !== undefined) return line
-    let out = line
-    out = out.replace(
-      /!?\[([^\]]*)\]\(<?([^)>\s]*)>?(?:\s+"[^"]*")?\)/g,
-      (_match, text: string, url: string) => `${text} (${breakAutolink(url)})`,
-    )
-    out = out.replace(/<([^<>\s]+)>/g, (_match, target: string) => breakAutolink(target))
-    out = out.replace(/(^|\s)((?:https?:\/\/|mailto:|www\.)[^\s<]+)/gi, (_match, pre: string, url: string) => `${pre}${breakAutolink(url)}`)
-    out = out.replace(/(^|[\s:(])([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})/g, (_match, pre: string, email: string) => `${pre}${breakAutolink(email)}`)
+    // Split the line into plain and inline-code spans (runs of backticks
+    // toggle code state). Code content passes through untouched: marked
+    // renders code spans verbatim, and code content cannot become a link.
+    const parts = line.split(/(`+)/)
+    let inCode = false
+    let out = ''
+    let unclosed: string | undefined
+    for (const part of parts) {
+      if (part === '') continue
+      if (/^`+$/.test(part)) {
+        inCode = !inCode
+        out += part
+        continue
+      }
+      if (inCode) {
+        unclosed = part
+        out += part
+        continue
+      }
+      unclosed = undefined
+      out += neutralizeChunk(part)
+    }
+    // Unbalanced backticks: marked cannot close the code span, so the text
+    // it would have sheltered is plain and must be neutralized.
+    if (unclosed !== undefined) {
+      out = out.slice(0, out.length - unclosed.length) + neutralizeChunk(unclosed)
+    }
     return out
   }).join('\n')
 }

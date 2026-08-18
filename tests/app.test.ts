@@ -270,6 +270,41 @@ test('stale attach suppression: late history from an older generation is ignored
   }
 })
 
+test('attach renders a loading phase while history is in flight', async () => {
+  const port = new FakePort()
+  port.historyEvents = { s1: [] }
+  let releaseHistory: (value: Awaited<ReturnType<DshPort['loadHistory']>>) => void = () => undefined
+  const original = port.loadHistory.bind(port)
+  port.loadHistory = (sessionId) => new Promise((resolve) => {
+    releaseHistory = resolve
+    void original(sessionId)
+  })
+  const { app, view } = await booted(port)
+  const attach = app.attach('s1' as never)
+  assert.equal(view.renders.at(-1)?.attachment.phase, 'loading')
+  releaseHistory({ ok: true, value: { events: [], hasMore: false } })
+  await attach
+  assert.equal(view.renders.at(-1)?.attachment.phase, 'attached')
+})
+
+test('shutdown during a history load renders nothing further', async () => {
+  const port = new FakePort()
+  port.historyEvents = { s1: [] }
+  let releaseHistory: (value: Awaited<ReturnType<DshPort['loadHistory']>>) => void = () => undefined
+  const original = port.loadHistory.bind(port)
+  port.loadHistory = (sessionId) => new Promise((resolve) => {
+    releaseHistory = resolve
+    void original(sessionId)
+  })
+  const { app, view } = await booted(port)
+  const attach = app.attach('s1' as never)
+  const rendersAfterAttach = view.renders.length
+  app.shutdown()
+  releaseHistory({ ok: true, value: { events: [], hasMore: false } })
+  await attach
+  assert.equal(view.renders.length, rendersAfterAttach)
+})
+
 test('list failure keeps the current rows and shows the safe error', async () => {
   const port = new FakePort()
   port.workspaces = [workspace({ workspaceId: 'w1' as never, title: 'p', sessionIds: ['s1' as never] })]
