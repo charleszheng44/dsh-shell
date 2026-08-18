@@ -542,7 +542,11 @@ export class App {
     // event on the mux stream renders the prompt itself). The notice clears
     // when that echo arrives; if the echo already arrived (it can beat the
     // unary response) it cleared the marker and the notice, so do not show
-    // it again.
+    // it again. One marker per attachment generation is an approximation:
+    // echoes carry no submission identity, so with two rapid submissions a
+    // delayed echo from the first can consume the marker of the second and
+    // suppress its notice. Cosmetic — the echo renders the prompt row
+    // either way.
     if (this.pendingAccepted === generation) {
       this.setState({ notice: 'Accepted by DSH' })
     }
