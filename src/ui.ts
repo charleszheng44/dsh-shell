@@ -27,12 +27,24 @@ import {
 } from '@earendil-works/pi-tui'
 
 import type { AppState, AppView, ProjectRow, SessionRow } from './app.js'
-import { partialSegments, type TranscriptRow } from './transcript.js'
+import { partialSegments, type AssistantSegment, type TranscriptRow } from './transcript.js'
 
 /** Safe picker label: the sanitized title, or a sanitized fallback so Pi's
  *  label || value render never exposes the raw DSH id/key. */
 export function pickerLabel(title: string, fallback: string): string {
   return terminalSafeText(title) || fallback
+}
+
+/** Assemble one assistant row's segments into a single Markdown document.
+ *  Tool markers and images render as plain lines; the caller sanitizes. */
+export function assistantMarkdown(segments: readonly AssistantSegment[]): string {
+  return segments
+    .map((segment) => segment.kind === 'text'
+      ? segment.text
+      : segment.kind === 'tool'
+        ? `Tool: ${segment.name}`
+        : '[image]')
+    .join('\n\n')
 }
 
 /**
@@ -81,17 +93,7 @@ function rowComponent(row: TranscriptRow): Component {
   if (row.kind === 'user') {
     return new Text(terminalSafeText(row.text), 1, 0)
   }
-  const stack = new Container()
-  for (const segment of row.segments) {
-    if (segment.kind === 'text') {
-      stack.addChild(new Markdown(terminalSafeText(segment.text), 1, 0, markdownTheme))
-    } else if (segment.kind === 'tool') {
-      stack.addChild(new Text(`Tool: ${terminalSafeText(segment.name)}`, 2, 0))
-    } else {
-      stack.addChild(new Text('[image]', 2, 0))
-    }
-  }
-  return stack
+  return new Markdown(terminalSafeText(assistantMarkdown(row.segments)), 1, 0, markdownTheme)
 }
 
 /** Terminal view: owns the Pi TUI, renders AppState, and shows pickers. */
@@ -184,14 +186,7 @@ export class TerminalView implements AppView {
       this.transcript.addChild(rowComponent(row))
     }
     if (attachment.partial !== undefined) {
-      const text = partialSegments(attachment.partial)
-        .map((segment) => segment.kind === 'text'
-          ? segment.text
-          : segment.kind === 'tool'
-            ? `Tool: ${segment.name}`
-            : '[image]')
-        .join('\n')
-      this.partial.setText(terminalSafeText(text))
+      this.partial.setText(terminalSafeText(assistantMarkdown(partialSegments(attachment.partial))))
       this.transcript.addChild(this.partial)
     }
   }

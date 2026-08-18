@@ -8,7 +8,7 @@ import { test } from 'node:test'
 
 import { Markdown } from '@earendil-works/pi-tui'
 
-import { pickerLabel, terminalSafeText } from '../src/ui.js'
+import { assistantMarkdown, pickerLabel, terminalSafeText } from '../src/ui.js'
 
 const identity = (text: string): string => text
 const markdownTheme = {
