@@ -369,6 +369,27 @@ export class App {
         turnActive: next.turnActive,
       },
     })
+    // A finished turn is a stats boundary: the footer's token and context
+    // numbers come from the session-list projection, so re-snapshot them
+    // instead of freezing the attach-time values for the whole attachment.
+    if (frame.event.type === 'turn/end') void this.refreshStats()
+  }
+
+  /** Re-snapshot the attached session's footer stats after a live turn/end.
+   *  Failures are silent: the previous snapshot stays, and a superseded
+   *  attachment or a disconnect discards the late result. */
+  private async refreshStats(): Promise<void> {
+    const attachment = this.state.attachment
+    if (this.closed || this.state.connection !== 'connected' || attachment.phase !== 'attached') return
+    const sessionId = attachment.sessionId
+    const generation = attachment.generation
+    const result = await this.port.listSessions(this.signal)
+    if (this.closed || this.state.connection !== 'connected') return
+    const current = this.state.attachment
+    if (current.phase !== 'attached' || current.sessionId !== sessionId || current.generation !== generation) return
+    if (!result.ok) return
+    const summary = result.value.items.find((candidate) => candidate.sessionId === sessionId)
+    this.setState({ attachment: { ...current, stats: summaryStats(summary) } })
   }
 
   /**

@@ -470,14 +470,9 @@ export class TerminalView implements AppView {
       this.hint.setText(footerStyle('Press Ctrl+P to choose a project and session'))
       this.transcript.addChild(this.hint)
     }
-    // The Deep diving status sits at the tail of the transcript, above the
-    // in-flight partial, mirroring the Web UI's turn status at the top of
-    // the streaming turn.
-    this.transcript.removeChild(this.working)
-    if (this.workingActive) this.transcript.addChild(this.working)
     // The live partial updates in place (single Markdown component) and stays
-    // the last child, after every finalized row; the assistant marker column
-    // is added only while there is in-flight content to show.
+    // after every finalized row; the assistant marker column is added only
+    // while there is in-flight content to show.
     this.transcript.removeChild(this.partialRow)
     if (attachment.phase === 'attached' && attachment.partial !== undefined) {
       this.partial.setText(terminalSafeText(assistantMarkdown(partialSegments(attachment.partial))))
@@ -485,6 +480,11 @@ export class TerminalView implements AppView {
     } else {
       this.partial.setText('')
     }
+    // The Deep diving status is the very last row of the transcript, below
+    // the streaming partial — the Web UI renders its turn status at the tail
+    // of the conversation, after the last content node.
+    this.transcript.removeChild(this.working)
+    if (this.workingActive) this.transcript.addChild(this.working)
   }
 
   openProjectPicker(rows: readonly ProjectRow[], onSelect: (row: ProjectRow) => void, onCancel: () => void): void {
@@ -646,7 +646,7 @@ export function headerText(state: AppState): string {
     : state.selectedProject === undefined
       ? 'no project'
       : state.projects.find((project) => project.key === state.selectedProject)?.title ?? 'unknown'
-  const notice = state.notice === undefined ? '' : ` · ${state.notice}`
+  const notice = state.notice === undefined ? '' : ` · ${terminalSafeText(state.notice).replace(/\s+/g, ' ').trim()}`
   return terminalSafeText(`${projectTitle} / ${sessionTitle} / ${state.connection}${notice}`)
 }
 

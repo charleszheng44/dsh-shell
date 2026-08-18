@@ -8,7 +8,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import type { MuxFrame } from '@deepseek-ai/dsh-host-apiproxy/api'
+import type { MuxFrame, SessionSummary } from '@deepseek-ai/dsh-host-apiproxy/api'
 import type { SessionEvent } from '@deepseek-ai/dsh-session/types'
 
 import { App, type AppView, type AppState } from '../src/app.js'
@@ -467,6 +467,38 @@ test('live turn/start and turn/end drive the working flag', async () => {
   await flush()
   const closed = view.renders.at(-1)?.attachment
   assert.equal(closed?.phase === 'attached' && closed.turnActive, undefined)
+})
+
+test('a live turn/end refreshes the footer stats snapshot', async () => {
+  const port = new FakePort()
+  const summaryWithStats = (usage: Record<string, unknown>): SessionSummary => ({
+    sessionId: 's1' as never,
+    updatedAt: 0,
+    running: false,
+    blank: false,
+    projections: {
+      asOfSeq: 1,
+      values: {
+        tokenUsage: { uncachedInputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 },
+        contextPressure: { pressureTokens: 10, contextWindow: 1000 },
+        ...usage,
+      } as never,
+    },
+  })
+  port.sessions = [summaryWithStats({})] as never
+  port.historyEvents = { s1: [userText(1, 'q')] }
+  const { app, view } = await booted(port)
+  await app.attach('s1' as never)
+  const before = view.renders.at(-1)?.attachment
+  assert.equal(before?.phase === 'attached' && before.stats?.pressureTokens, 10)
+  // The host's next list call reports grown usage.
+  port.sessions = [summaryWithStats({ tokenUsage: { uncachedInputTokens: 5, outputTokens: 9, cacheReadTokens: 0, cacheWriteTokens: 0 } })] as never
+  port.push(sessionFrame('s1', { type: 'turn/end', seq: 2, time: 0, data: { turn: 0, reason: { kind: 'stop' } } } as never))
+  await flush()
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  const after = view.renders.at(-1)?.attachment
+  assert.equal(after?.phase === 'attached' && after.stats?.outputTokens, 9)
+  assert.equal(after?.phase === 'attached' && after.stats?.pressureTokens, 10)
 })
 
 test('a turn opened in history stays working until a buffered turn/end closes it', async () => {
