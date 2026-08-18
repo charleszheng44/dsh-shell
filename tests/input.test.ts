@@ -178,17 +178,10 @@ test('submission is disabled when disconnected', async () => {
   const port = new FakePort()
   const { app, view } = await booted(port)
   await attach(app, port)
-  port.streamEnded = true
-  for (const waiter of [] as Array<() => void>) void waiter
-  // Force the pump to observe the end by pushing an end marker is not
-  // supported by this fake; simulate via the connection state transition.
-  // Instead: close the stream through the abort path used by shutdown.
-  const state = app.getState()
-  if (state.connection !== 'connected') return
-  // Disconnect via a stream/error frame.
+  // Disconnect via a stream/error frame delivered while the stream is alive.
   port.push({ type: 'stream/error', error: { code: 'internal', message: 'x', details: {} } } as never)
   await new Promise((resolve) => setTimeout(resolve, 20))
+  assert.equal(view.renders.at(-1)?.connection, 'disconnected')
   const result = await app.submit('nope')
   assert.deepEqual(result, { ok: false, reason: 'not-attached' })
-  assert.equal(view.renders.at(-1)?.connection, 'disconnected')
 })

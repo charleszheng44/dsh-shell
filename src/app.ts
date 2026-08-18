@@ -276,6 +276,11 @@ export class App {
       return
     }
     // attached: apply live events under the overlap and continuity rules.
+    // The accepted notice is transient: the prompt's own user/message echo
+    // (rendered below) supersedes it.
+    if (frame.event.type === 'user/message' && this.state.notice === 'Accepted by DSH') {
+      this.setState({ notice: undefined })
+    }
     if (frame.event.seq <= attachment.lastSeq) return
     if (frame.event.seq !== attachment.lastSeq + 1) {
       this.setState({ connection: 'disconnected', notice: 'Disconnected: sequence gap' })
@@ -487,9 +492,11 @@ export class App {
     const sessionId = attachment.sessionId
     this.setState({ attachment: { ...attachment, sending: true } })
     const result = await this.port.prompt(sessionId, text, this.signal)
-    // A switch or shutdown while in flight: drop the late result entirely.
+    // A switch, shutdown, or disconnect while in flight: drop the late result
+    // entirely so it cannot overwrite the disconnect notice.
     const current = this.state.attachment
     if (this.closed
+      || this.state.connection !== 'connected'
       || current.phase !== 'attached'
       || current.generation !== generation
       || current.sessionId !== sessionId) {
