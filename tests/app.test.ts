@@ -179,7 +179,18 @@ test('workspace rows preserve the workspace sessionIds order', () => {
   ]
   const ws = workspace({ workspaceId: 'w1' as never, title: 'project', sessionIds: ['c' as never, 'a' as never] })
   const rows = sessionRows([ws], sessions, [], ws.workspaceId)
-  assert.deepEqual(rows.map((row) => row.sessionId), ['c', 'a', 'b'])
+  assert.deepEqual(rows.map((row) => row.sessionId), ['c', 'a'])
+})
+
+test('workspace picker never leaks other workspaces sessions', () => {
+  const sessions = [
+    summary({ sessionId: 'a' as never }),
+    summary({ sessionId: 'b' as never }),
+  ]
+  const wsA = workspace({ workspaceId: 'wA' as never, title: 'A', sessionIds: ['a' as never] })
+  const wsB = workspace({ workspaceId: 'wB' as never, title: 'B', sessionIds: ['b' as never] })
+  const rows = sessionRows([wsA, wsB], sessions, [], wsA.workspaceId)
+  assert.deepEqual(rows.map((row) => row.sessionId), ['a'])
 })
 
 test('title fallback: projection title, then cwd basename, then session id', () => {

@@ -13,6 +13,8 @@ import { basename } from 'node:path'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { SessionEvent } from '@deepseek-ai/dsh-session/types'
 import type { SessionSummary, WorkspaceId, WorkspaceView } from '@deepseek-ai/dsh-host-apiproxy/api'
+// Activates the title projection-key augmentation so
+// SessionSummary.projections.values.title is typed; type-only, no runtime cost.
 import type {} from '@deepseek-ai/dsh-session-title/types'
 
 import type { DshPort, HostDescription } from './dsh.js'
@@ -103,17 +105,12 @@ function orderByWorkspace(
   project: WorkspaceId,
 ): readonly SessionSummary[] {
   const workspace = workspaces.find((candidate) => candidate.workspaceId === project)
-  if (workspace === undefined) return sessions
+  if (workspace === undefined) return []
   const byId = new Map(sessions.map((session) => [session.sessionId, session]))
   const ordered: SessionSummary[] = []
   for (const sessionId of workspace.sessionIds) {
     const session = byId.get(sessionId)
     if (session !== undefined) ordered.push(session)
-  }
-  // Sessions attached to this project that the workspace list has not
-  // materialized yet stay reachable at the end rather than disappearing.
-  for (const session of sessions) {
-    if (!ordered.includes(session)) ordered.push(session)
   }
   return ordered
 }
@@ -170,7 +167,6 @@ export class App {
       return { ok: false, error: describe.error }
     }
     this.setState({ connection: 'connected' })
-    await this.refreshLists()
     await this.openProjectPicker()
     return { ok: true, host: describe.value }
   }
