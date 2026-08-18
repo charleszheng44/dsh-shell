@@ -8,6 +8,8 @@
  * counter makes late history results from an older attachment invisible.
  */
 
+import { basename } from 'node:path'
+
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { SessionEvent } from '@deepseek-ai/dsh-session/types'
 import type { SessionSummary, WorkspaceId, WorkspaceView } from '@deepseek-ai/dsh-host-apiproxy/api'
@@ -122,8 +124,8 @@ export function sessionTitle(session: SessionSummary): string {
   if (typeof title === 'string' && title !== '') return title
   const cwd = session.cwd
   if (cwd !== undefined && cwd !== '') {
-    const basename = cwd.split('/').filter((part) => part !== '').at(-1)
-    if (basename !== undefined) return basename
+    const name = basename(cwd)
+    if (name !== '' && name !== '/') return name
   }
   return session.sessionId
 }
