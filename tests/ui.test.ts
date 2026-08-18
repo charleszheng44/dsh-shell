@@ -8,7 +8,7 @@ import { test } from 'node:test'
 
 import { Container, Markdown, getCapabilities, setCapabilities } from '@earendil-works/pi-tui'
 
-import { assistantMarkdown, headerText, neutralizeLinks, pickerLabel, reconcileRows, sessionPickerItems, terminalSafeText } from '../src/ui.js'
+import { assistantMarkdown, editorTextAfterSubmit, headerText, neutralizeLinks, pickerLabel, reconcileRows, sessionPickerItems, terminalSafeText } from '../src/ui.js'
 import type { TranscriptRow } from '../src/transcript.js'
 
 const identity = (text: string): string => text
@@ -353,4 +353,12 @@ test('bidi and format controls are stripped from display text', () => {
   assert.equal(terminalSafeText('p\u061Cq'), 'pq')
   // U+200B (zero-width space) is kept for link neutralization.
   assert.ok(terminalSafeText('a\u200Bb').includes('\u200B'))
+})
+
+test('editorTextAfterSubmit clears on acceptance and retains on rejection', () => {
+  assert.equal(editorTextAfterSubmit({ ok: true }, 'draft'), '')
+  assert.equal(editorTextAfterSubmit({ ok: false, reason: 'rejected', error: 'boom' }, 'draft'), 'draft')
+  assert.equal(editorTextAfterSubmit({ ok: false, reason: 'slash-command' }, '/cmd'), '/cmd')
+  assert.equal(editorTextAfterSubmit({ ok: false, reason: 'blank' }, '   '), '   ')
+  assert.equal(editorTextAfterSubmit({ ok: false, reason: 'stale' }, 'old draft'), '')
 })

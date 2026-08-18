@@ -267,9 +267,9 @@ export class TerminalView implements AppView {
     this.editor.onSubmit = (text) => {
       this.editor.disableSubmit = true // guard reentry
       void this.onSubmit(text).then((result) => {
-        if (result.ok) {
-          this.editor.setText('')
-        }
+        // pi clears the buffer before onSubmit; keep or restore the editor
+        // text per the design (accepted clears, rejected retains).
+        this.editor.setText(editorTextAfterSubmit(result, text))
         // The App renders the notice; re-enable for the next attempt.
         this.editor.disableSubmit = !this.editorEnabled
       })
@@ -304,14 +304,16 @@ export class TerminalView implements AppView {
     this.header.setText(headerText(state))
     this.renderTranscript(state.attachment)
     // Enable submission only for a connected, attached session, and focus
-    // the editor so typed characters reach it.
+    // the editor so typed characters reach it — but never steal focus from
+    // an open picker overlay (live frames arrive while pickers are up).
     this.editorEnabled = state.connection === 'connected'
       && state.attachment.phase === 'attached'
-    this.editor.disableSubmit = !this.editorEnabled
+    const sending = state.attachment.phase === 'attached' && state.attachment.sending
+    this.editor.disableSubmit = !this.editorEnabled || sending
     if (!this.editorEnabled) {
       this.editor.setText('')
       this.tui.setFocus(null)
-    } else {
+    } else if (this.overlay === undefined) {
       this.tui.setFocus(this.editor)
     }
     this.tui.requestRender()
@@ -427,6 +429,14 @@ export function reconcileRows(
       cache[index] = { row, component }
     }
   }
+}
+
+/** Editor content after a submit attempt: cleared on acceptance, retained
+ *  (restored) on any other outcome except a stale session switch. */
+export function editorTextAfterSubmit(result: SubmitResult, submitted: string): string {
+  if (result.ok) return ''
+  if (result.reason === 'stale') return ''
+  return submitted
 }
 
 /** Status header: project / session / connection, with the notice appended. */

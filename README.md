@@ -59,11 +59,29 @@ policy.
   `http://127.0.0.1:3080`); there is no authentication or TLS.
 - No session or workspace creation, rename, archive, deletion, search, fork,
   model selection, or steering.
-- No session or workspace creation, rename, archive, deletion, search, fork,
-  model selection, or steering.
-- No approvals, questions, attachments, slash commands, or automatic
-  reconnect: losing the stream shows a disconnected state and requires a
-  restart.
+- No approvals, questions, attachments, or automatic reconnect: losing the
+  stream shows a disconnected state and requires a restart.
+- Slash commands are rejected locally with a Web UI instruction.
 - The client pins the exact published DSH network-client version; an
   incompatible host fails loudly at `host.describe` before any selector
   opens.
+
+## Validation recipe
+
+Keyless two-client smoke against DSH's mock LLM (from the deepseek-harness
+checkout):
+
+```sh
+# Terminal 1: mock LLM (pnpm's `--` passthrough would reach the script as a
+# positional argument, so invoke the script directly)
+node --import tsx packages/test-support/llm-mock-server/src/bin.ts --port 8000 \
+  --api-key mock-key --sequence slow_success --repeat-last \
+  --success-text $'```ts\nconst answer = 42\n```'
+# Terminal 2: DSH web host against the mock
+DEEPSEEK_BASE_URL=http://127.0.0.1:8000/v1 DEEPSEEK_API_KEY=mock-key pnpm dsh --profile web
+# Terminal 3: this TUI
+pnpm dev -- --host http://127.0.0.1:3080
+```
+
+Text entered in the TUI appears in the Web UI only after DSH logs it, and the
+assistant response streams into both clients.

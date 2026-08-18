@@ -207,6 +207,8 @@ export class App {
   private streamPump: Promise<void> | undefined
   /** Set on stream/error so the pump stops consuming like a stream end. */
   private streamAborted = false
+  /** Attachment generation awaiting its prompt's user/message echo. */
+  private pendingAccepted: number | undefined
 
   /** Drain mux frames until the stream ends, throws, or emits stream/error. */
   private async pumpStream(onOpen: () => void, onEnded: () => void): Promise<void> {
@@ -276,9 +278,14 @@ export class App {
       return
     }
     // attached: apply live events under the overlap and continuity rules.
-    // The accepted notice is transient: the prompt's own user/message echo
-    // (rendered below) supersedes it.
-    if (frame.event.type === 'user/message' && this.state.notice === 'Accepted by DSH') {
+    // The accepted notice is transient: the prompt's own append-origin
+    // user/message echo (rendered below) supersedes it.
+    if (this.pendingAccepted === attachment.generation
+      && frame.event.type === 'user/message'
+      && frame.event.surfaceOp === 'append'
+      && frame.event.data.source.kind === 'user'
+      && frame.event.seq > attachment.lastSeq) {
+      this.pendingAccepted = undefined
       this.setState({ notice: undefined })
     }
     if (frame.event.seq <= attachment.lastSeq) return
@@ -391,6 +398,7 @@ export class App {
     }
     this.view.closePicker()
     const generation = ++this.generation
+    this.pendingAccepted = undefined
     this.setState({
       attachment: { phase: 'loading', sessionId, generation, buffered: [] },
     })
@@ -487,7 +495,12 @@ export class App {
     }
     const trimmed = text.trim()
     if (trimmed === '') return { ok: false, reason: 'blank' }
-    if (trimmed.startsWith('/')) return { ok: false, reason: 'slash-command' }
+    if (trimmed.startsWith('/')) {
+      // Design: slash commands are rejected locally, the text is retained,
+      // and the footer instruction is surfaced.
+      this.setState({ notice: 'Slash commands require the Web UI' })
+      return { ok: false, reason: 'slash-command' }
+    }
     const generation = attachment.generation
     const sessionId = attachment.sessionId
     this.setState({ attachment: { ...attachment, sending: true } })
@@ -500,6 +513,10 @@ export class App {
       || current.phase !== 'attached'
       || current.generation !== generation
       || current.sessionId !== sessionId) {
+      // Clear the in-flight flag so the stale result cannot wedge sending.
+      if (current.phase === 'attached') {
+        this.setState({ attachment: { ...current, sending: false } })
+      }
       return { ok: false, reason: 'stale' }
     }
     this.setState({ attachment: { ...current, sending: false } })
@@ -509,7 +526,9 @@ export class App {
     }
     // The design doc's prompt-submission flow: show a transient accepted
     // notice and never append a transcript row (the logged user/message
-    // event on the mux stream renders the prompt itself).
+    // event on the mux stream renders the prompt itself). The notice clears
+    // when that echo arrives, even if it beats the unary response.
+    this.pendingAccepted = generation
     this.setState({ notice: 'Accepted by DSH' })
     return { ok: true }
   }

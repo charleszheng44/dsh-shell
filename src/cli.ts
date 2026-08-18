@@ -151,7 +151,13 @@ export async function main(argv: readonly string[]): Promise<number> {
       const deadline = AbortSignal.timeout(PUMP_SETTLE_TIMEOUT_MS)
       void Promise.race([app.waitForPump(), new Promise((resolve) => {
         deadline.addEventListener('abort', resolve, { once: true })
-      })]).catch(() => undefined).finally(() => { resolveExit(code) })
+      })]).catch((error) => {
+        // A pump rejection during shutdown that is NOT abort-driven is a
+        // render failure: surface it and exit nonzero instead of swallowing.
+        if (controller.signal.aborted) return
+        console.error(terminalSafeText(`dsh-tui: ${error instanceof Error ? error.message : String(error)}`))
+        resolveExit(1)
+      }).finally(() => { resolveExit(code) })
     },
     disposeSignals,
   })

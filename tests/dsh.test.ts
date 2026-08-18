@@ -195,3 +195,35 @@ test('NodeApiClient mux stream opens, yields frames, and abort closes the socket
   abort.abort()
   await pump
 })
+
+test('createDshPort.prompt sends the unsanitized text as one queue-mode part', async () => {
+  let seen: unknown
+  const client = stubClient({
+    sessions: {
+      prompt: async (payload) => {
+        seen = payload
+        return ok({ accepted: true })
+      },
+    },
+  })
+  const port: DshPort = createDshPort(client)
+  const result = await port.prompt('session-abc' as never, '  hello \u0001 raw  ', undefined)
+  assert.equal(result.ok, true)
+  assert.deepEqual(seen, {
+    sessionId: 'session-abc',
+    mode: 'queue',
+    content: [{ type: 'text', text: '  hello \u0001 raw  ' }],
+  })
+})
+
+test('createDshPort.prompt folds transport throws into the error branch', async () => {
+  const client = stubClient({
+    sessions: {
+      prompt: async () => { throw new Error('connection lost') },
+    },
+  })
+  const port: DshPort = createDshPort(client)
+  const result = await port.prompt('s1' as never, 'hello', undefined)
+  assert.equal(result.ok, false)
+  if (!result.ok) assert.match(result.error.message, /connection lost/)
+})

@@ -185,3 +185,42 @@ test('submission is disabled when disconnected', async () => {
   const result = await app.submit('nope')
   assert.deepEqual(result, { ok: false, reason: 'not-attached' })
 })
+
+test('slash-command rejection surfaces the Web UI instruction', async () => {
+  const port = new FakePort()
+  const { app, view } = await booted(port)
+  await attach(app, port)
+  const result = await app.submit('/model gpt4')
+  assert.deepEqual(result, { ok: false, reason: 'slash-command' })
+  assert.equal(view.renders.at(-1)?.notice, 'Slash commands require the Web UI')
+  assert.equal(port.promptCalls.length, 0)
+})
+
+test('the accepted notice clears when the prompt echo renders', async () => {
+  const port = new FakePort()
+  const { app, view } = await booted(port)
+  await attach(app, port)
+  await app.submit('hello')
+  assert.equal(view.renders.at(-1)?.notice, 'Accepted by DSH')
+  // The logged user/message echo streams back at the next sequence.
+  port.push({ type: 'session/event', sessionId: 's1', event: userText(2, 'hello') } as never)
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  assert.equal(view.renders.at(-1)?.notice, undefined)
+  const last = view.renders.at(-1)
+  if (last?.attachment.phase === 'attached') {
+    assert.equal(last.attachment.transcript.length, 2)
+  }
+})
+
+test('the accepted notice is not cleared by a replacement user/message', async () => {
+  const port = new FakePort()
+  const { app, view } = await booted(port)
+  await attach(app, port)
+  await app.submit('hello')
+  port.push({ type: 'session/event', sessionId: 's1', event: {
+    ...userText(2, 'replacement'),
+    surfaceOp: { op: 'replace', start: 0, end: 1 },
+  } } as never)
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  assert.equal(view.renders.at(-1)?.notice, 'Accepted by DSH')
+})
