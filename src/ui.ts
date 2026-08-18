@@ -314,7 +314,9 @@ export class TerminalView implements AppView {
     this.editor.disableSubmit = policy.disableSubmit
     if (policy.clearText) {
       this.editor.setText('')
-      this.tui.setFocus(null)
+      // A disconnect or detach while a picker is open must not rip focus
+      // from the SelectList (mirrors the focus-to-editor guard below).
+      if (this.overlay === undefined) this.tui.setFocus(null)
     } else if (policy.focusEditor) {
       this.tui.setFocus(this.editor)
     }
