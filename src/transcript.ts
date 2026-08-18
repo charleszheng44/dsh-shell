@@ -179,7 +179,7 @@ function updateBlocks(blocks: Map<number, PartialBlock>, chunk: StreamChunk): Re
 function segmentFromBlock(type: string, block: unknown): AssistantSegment | undefined {
   if (type === 'text') {
     const text = (block as { text?: string }).text
-    return text === undefined || text === '' ? undefined : { kind: 'text', text }
+    return text === undefined || text.trim() === '' ? undefined : { kind: 'text', text }
   }
   if (type === 'tool-call') {
     const name = (block as { name?: string }).name
