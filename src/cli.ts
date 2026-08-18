@@ -179,7 +179,9 @@ export async function main(argv: readonly string[]): Promise<number> {
   process.removeListener('unhandledRejection', onUnhandledRejection)
   return code}
 
-// Direct execution: run the real entry.
+// Direct execution: run the real entry. A rejection from main (only possible
+// before the gate exists, since every later path resolves through it) exits
+// with a nonzero code and no terminal was started yet, so nothing to restore.
 const isMain = process.argv[1] !== undefined
   && (process.argv[1].endsWith('cli.js') || process.argv[1].endsWith('cli.ts'))
 if (isMain) {
