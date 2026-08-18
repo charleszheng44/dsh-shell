@@ -146,6 +146,8 @@ export function neutralizeLinks(markdown: string): string {
       if (part === '') continue
       if (/^`+$/.test(part)) {
         inCode = !inCode
+        // A closing run ends the code span: nothing is unterminated anymore.
+        if (!inCode) unclosed = undefined
         out += part
         continue
       }

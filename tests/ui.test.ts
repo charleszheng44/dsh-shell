@@ -171,6 +171,10 @@ test('neutralizeLinks leaves inline code spans untouched', () => {
   const codeUrl = neutralizeLinks('see `https://x.com` now')
   assert.ok(!codeUrl.includes('\u200B'))
   assert.ok(codeUrl.includes('`https://x.com`'))
+  // A balanced code span that ENDS the line must survive intact (the
+  // unterminated-span tracker must reset when the span closes).
+  assert.equal(neutralizeLinks('Tool: `run_code`'), 'Tool: `run_code`')
+  assert.equal(neutralizeLinks('x `a` `b`'), 'x `a` `b`')
 })
 
 test('neutralizeLinks neutralizes text an unterminated code span would shelter', () => {
