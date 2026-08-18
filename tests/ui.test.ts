@@ -8,7 +8,7 @@ import { test } from 'node:test'
 
 import { Container, Markdown, getCapabilities, setCapabilities } from '@earendil-works/pi-tui'
 
-import { assistantMarkdown, editorPolicy, editorTextAfterSubmit, headerText, neutralizeLinks, pickerLabel, reconcileRows, sessionPickerItems, terminalSafeText } from '../src/ui.js'
+import { PickerFrame, assistantMarkdown, editorPolicy, editorTextAfterSubmit, headerText, neutralizeLinks, pickerLabel, reconcileRows, sessionPickerItems, terminalSafeText } from '../src/ui.js'
 import type { TranscriptRow } from '../src/transcript.js'
 
 const identity = (text: string): string => text
@@ -386,4 +386,21 @@ test('editorPolicy enables input only for a connected attached session', () => {
   const loading = editorPolicy({ connection: 'connected', attachment: { phase: 'loading', buffered: [] } } as never, false)
   assert.equal(loading.enabled, false)
   assert.equal(loading.clearText, true)
+})
+
+test('PickerFrame renders a titled border around its children', () => {
+  const frame = new PickerFrame('Select session', (text: string) => text)
+  frame.addChild({ render: () => ['alpha', 'beta'] } as never)
+  const lines = frame.render(20)
+  // width 20 -> inner 16; title 14 -> two dashes on the top border.
+  assert.equal(lines[0], '┌─ Select session──┐')
+  assert.ok((lines[1] ?? '').includes('alpha'))
+  assert.ok((lines[1] ?? '').includes('│'), 'row keeps its side borders')
+  assert.equal((lines[2] ?? '').includes('beta'), true)
+  assert.equal(lines.at(-1), '└──────────────────┘')
+  // ANSI-styled children are padded by visible width, not code length.
+  const styled = new PickerFrame('x', (text: string) => text)
+  styled.addChild({ render: () => ['\x1b[1;36mselected\x1b[0m'] } as never)
+  const styledLines = styled.render(20)
+  assert.ok(styledLines[1]?.endsWith(' │'), 'ANSI-styled row is padded by visible width')
 })

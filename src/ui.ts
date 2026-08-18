@@ -20,14 +20,13 @@ import {
   TuiAltScreen,
   VStack,
   type Component,
-  type EditorTheme,
-  type MarkdownTheme,
   type OverlayHandle,
   type SelectItem,
 } from '@earendil-works/pi-tui'
 
 import type { AppState, AppView, ProjectRow, SessionRow, SubmitResult } from './app.js'
 import { partialSegments, type AssistantSegment, type TranscriptRow } from './transcript.js'
+import { editorTheme, footerStyle, headerStyle, markdownTheme, pickerPanelStyle, userStyle } from './theme.js'
 
 /** Safe picker label: the sanitized title (newlines collapsed so a DSH title
  *  cannot inject a row break into the SelectList), or a sanitized fallback so
@@ -188,40 +187,49 @@ export function terminalSafeText(text: string): string {
   )
 }
 
-const identity = (text: string): string => text
-
-const editorTheme: EditorTheme = {
-  borderColor: identity,
-  selectList: {
-    selectedPrefix: identity,
-    selectedText: identity,
-    description: identity,
-    scrollInfo: identity,
-    noMatch: identity,
-  },
+/** ANSI-aware visible width: SGR sequences carry no columns. */
+function visibleLength(text: string): number {
+  return text.replace(/\x1b\[[0-9;]*m/g, '').length
 }
 
-const markdownTheme: MarkdownTheme = {
-  heading: identity,
-  link: identity,
-  linkUrl: identity,
-  code: identity,
-  codeBlock: identity,
-  codeBlockBorder: identity,
-  quote: identity,
-  quoteBorder: identity,
-  hr: identity,
-  listBullet: identity,
-  bold: identity,
-  italic: identity,
-  strikethrough: identity,
-  underline: identity,
+/** Bordered, titled panel around a picker list so the overlay reads as a
+ *  separate panel instead of mixing with the transcript text. Keyboard input
+ *  is delegated to the wrapped component (the SelectList owns selection). */
+export class PickerFrame implements Component {
+  private readonly children: Component[] = []
+
+  constructor(private readonly title: string, private readonly style: (text: string) => string) {}
+
+  addChild(component: Component): void {
+    this.children.push(component)
+  }
+
+  handleInput(data: string): void {
+    // The overlay focuses this frame; route keys to the list inside it.
+    for (const child of this.children) child.handleInput?.(data)
+  }
+
+  invalidate(): void {}
+
+  render(width: number): string[] {
+    const inner = Math.max(8, width - 4)
+    const rows = this.children.flatMap((child) => child.render(inner))
+    const title = this.title.length > inner - 2 ? this.title.slice(0, inner - 2) : this.title
+    const lines: string[] = []
+    lines.push(this.style(`┌─ ${title}${'─'.repeat(Math.max(0, inner - title.length))}┐`))
+    for (const row of rows) {
+      const pad = Math.max(0, inner - visibleLength(row))
+      lines.push(this.style(`│ ${row}${' '.repeat(pad)} │`))
+    }
+    lines.push(this.style(`└${'─'.repeat(inner + 2)}┘`))
+    return lines
+  }
 }
 
 /** One transcript line component: user text or assistant Markdown. */
 function rowComponent(row: TranscriptRow): Component {
   if (row.kind === 'user') {
-    return new Text(terminalSafeText(row.text), 1, 0)
+    return new Text(userStyle(terminalSafeText(row.text)), 1, 0)
   }
   return new Markdown(terminalSafeText(assistantMarkdown(row.segments)), 1, 0, markdownTheme)
 }
@@ -244,7 +252,7 @@ export class TerminalView implements AppView {
   ) {
     this.editor.disableSubmit = true
     const footer = new Text(
-      'Ctrl+P project  Ctrl+S session  Ctrl+C quit\nApprovals and questions: use Web UI',
+      footerStyle('Ctrl+P project  Ctrl+S session  Ctrl+C quit\nApprovals and questions: use Web UI'),
       1,
       0,
     )
@@ -307,7 +315,7 @@ export class TerminalView implements AppView {
   private editorEnabled = false
 
   render(state: AppState): void {
-    this.header.setText(headerText(state))
+    this.header.setText(headerStyle(headerText(state)))
     this.renderTranscript(state.attachment)
     const policy = editorPolicy(state, this.overlay !== undefined)
     this.editorEnabled = policy.enabled
@@ -350,7 +358,7 @@ export class TerminalView implements AppView {
         label: pickerLabel(row.title, fallback),
       }
     })
-    this.showPicker(items, (item) => {
+    this.showPicker(items, 'Select project', (item) => {
       const row = rows.find((candidate) => String(candidate.key) === item.value)
       if (row !== undefined) onSelect(row)
     }, onCancel)
@@ -361,17 +369,18 @@ export class TerminalView implements AppView {
     if (rows.length === 0) {
       // Design: an empty project remains selectable and shows a notice; it
       // never creates a session, and Enter on the notice just closes.
-      this.showPicker(items, () => undefined, onCancel)
+      this.showPicker(items, 'Select session', () => undefined, onCancel)
       return
     }
-    this.showPicker(items, (item) => {
+    this.showPicker(items, 'Select session', (item) => {
       const row = rows.find((candidate) => String(candidate.sessionId) === item.value)
       if (row !== undefined) onSelect(row)
     }, onCancel)
   }
 
-  private showPicker(items: SelectItem[], onSelect: (item: SelectItem) => void, onCancel: () => void): void {
+  private showPicker(items: SelectItem[], title: string, onSelect: (item: SelectItem) => void, onCancel: () => void): void {
     this.closePicker()
+    const frame = new PickerFrame(title, pickerPanelStyle)
     const list = new SelectList(items, 10, editorTheme.selectList)
     list.onSelect = (item) => {
       this.closePicker()
@@ -381,7 +390,8 @@ export class TerminalView implements AppView {
       this.closePicker()
       onCancel()
     }
-    this.overlay = this.tui.showOverlay(list, {
+    frame.addChild(list)
+    this.overlay = this.tui.showOverlay(frame, {
       width: '60%',
       maxHeight: '50%',
       anchor: 'center',
