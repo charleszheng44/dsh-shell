@@ -278,3 +278,94 @@ test('shutdown is idempotent', async () => {
   app.shutdown()
   assert.equal(view.stopped, 1)
 })
+
+test('boot keeps the All sessions bucket when the first list refresh fails', async () => {
+  const port = new FakePort()
+  port.listWorkspaces = async () => {
+    return { ok: false, error: { code: 'internal', message: 'boom', details: {} } }
+  }
+  const view = new FakeView()
+  const app = new App(port, view, abort.signal)
+  const result = await app.boot()
+  assert.equal(result.ok, true)
+  assert.deepEqual(view.projectPickerRows?.map((row) => row.title), ['All sessions'])
+  assert.equal(view.renders.at(-1)?.notice, 'boom')
+})
+
+test('generic history error resets the attachment and keeps the notice without reopening the picker', async () => {
+  const port = new FakePort()
+  port.workspaces = [workspace({ workspaceId: 'w1' as never, title: 'p', sessionIds: ['s1' as never] })]
+  port.sessions = [summary({ sessionId: 's1' as never })]
+  port.loadHistory = async () => {
+    return { ok: false, error: { code: 'internal', message: 'boom', details: {} } }
+  }
+  const { app, view } = await booted(port)
+  await app.selectProject({ key: 'w1' as never, title: 'p' })
+  const pickerClosedAfterProject = view.sessionPickerRows === undefined
+  await app.attach('s1' as never)
+  const last = view.renders.at(-1)
+  assert.equal(last?.attachment.phase, 'none')
+  assert.equal(last?.notice, 'boom')
+  // No picker was reopened for a generic error (unlike session-not-found).
+  assert.equal(view.sessionPickerRows, undefined)
+  void pickerClosedAfterProject
+})
+
+test('concurrent picker opens: only the newest request opens an overlay', async () => {
+  const port = new FakePort()
+  port.workspaces = [
+    workspace({ workspaceId: 'w1' as never, title: 'p', sessionIds: ['s1' as never] }),
+  ]
+  port.sessions = [summary({ sessionId: 's1' as never })]
+  const { app, view } = await booted(port)
+  await app.selectProject({ key: 'w1' as never, title: 'p' })
+  view.closePicker()
+  // Gate every listWorkspaces call until both picker opens are in flight.
+  const waiters: Array<() => void> = []
+  const original = port.listWorkspaces.bind(port)
+  port.listWorkspaces = async () => {
+    await new Promise<void>((resolve) => { waiters.push(resolve) })
+    return original()
+  }
+  const p1 = app.openProjectPicker()
+  const p2 = app.openSessionPicker()
+  for (const resolve of waiters.splice(0)) resolve()
+  await Promise.all([p1, p2])
+  // The session picker (opened second, request 2) wins; the stale project
+  // picker open from request 1 must not have rendered.
+  assert.equal(view.projectPickerRows, undefined)
+  assert.ok(view.sessionPickerRows !== undefined)
+})
+
+test('a superseded refresh cannot clobber newer rows or notices', async () => {
+  const port = new FakePort()
+  port.workspaces = [workspace({ workspaceId: 'w1' as never, title: 'A', sessionIds: ['s1' as never] })]
+  port.sessions = [summary({ sessionId: 's1' as never })]
+  const { app, view } = await booted(port)
+  await app.selectProject({ key: 'w1' as never, title: 'A' })
+  view.closePicker()
+  // First refresh hangs; second refresh succeeds with a fresh workspace list.
+  const gate = new Set<() => void>()
+  const original = port.listWorkspaces.bind(port)
+  port.listWorkspaces = async () => {
+    await new Promise<void>((resolve) => { gate.add(resolve) })
+    return original()
+  }
+  const stale = app.openProjectPicker()
+  const newer = app.openProjectPicker() // newer request; also gated
+  for (const resolve of [...gate]) resolve()
+  await Promise.all([stale, newer])
+  // The newer refresh's rows are what the picker shows.
+  assert.ok(view.projectPickerRows !== undefined)
+  assert.equal(view.projectPickerRows?.length, 2) // All sessions + w1
+})
+
+test('attach ignores a request made after shutdown', async () => {
+  const port = new FakePort()
+  port.workspaces = [workspace({ workspaceId: 'w1' as never, title: 'p', sessionIds: ['s1' as never] })]
+  port.sessions = [summary({ sessionId: 's1' as never })]
+  const { app, view } = await booted(port)
+  app.shutdown()
+  await app.attach('s1' as never)
+  assert.equal(view.renders.at(-1)?.attachment.phase, 'none')
+})

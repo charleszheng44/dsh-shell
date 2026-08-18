@@ -174,14 +174,19 @@ export class App {
     return { ok: true, host: describe.value }
   }
 
-  /** Re-fetch both lists; a failure keeps the current rows and surfaces a notice. */
+  /**
+   * Re-fetch both lists; a failure keeps the current rows and surfaces a
+   * notice. Writes state only when this refresh belongs to the newest picker
+   * request, so a superseded refresh can never clobber newer rows or notices.
+   */
   async refreshLists(): Promise<void> {
     if (this.closed) return
+    const request = this.pickerRequest
     const [workspaces, sessions] = await Promise.all([
       this.port.listWorkspaces(this.signal),
       this.port.listSessions(this.signal),
     ])
-    if (this.closed) return
+    if (this.closed || request !== this.pickerRequest) return
     if (!workspaces.ok) {
       this.setState({ notice: workspaces.error.message })
       return
@@ -250,6 +255,7 @@ export class App {
 
   /** Attach to a session: load one tail history page and project it. */
   async attach(sessionId: SessionId): Promise<void> {
+    if (this.closed) return
     this.view.closePicker()
     const generation = ++this.generation
     this.setState({
@@ -261,10 +267,23 @@ export class App {
     if (!history.ok) {
       if (history.error.code === 'session-not-found') {
         this.setState({ attachment: emptyAttachment })
-        await this.openSessionPicker()
-        // The picker refresh clears notices; re-assert the reason afterward so
-        // returning to the picker stays explained.
-        this.setState({ notice: 'Session no longer exists' })
+        const request = ++this.pickerRequest
+        await this.refreshLists()
+        // Re-assert the reason only when this reopen actually opened, so a
+        // superseded reopen or a concurrent newer picker stays unclobbered.
+        if (!this.closed && request === this.pickerRequest) {
+          const project = this.state.selectedProject
+          const rows = project === undefined
+            ? []
+            : sessionRows(
+              this.rowsCache.workspaces,
+              this.rowsCache.sessions,
+              this.rowsCache.archived,
+              project,
+            )
+          this.view.openSessionPicker(rows, (row) => { void this.attach(row.sessionId) }, () => this.view.closePicker())
+          this.setState({ notice: 'Session no longer exists' })
+        }
       } else {
         this.setState({
           attachment: emptyAttachment,
