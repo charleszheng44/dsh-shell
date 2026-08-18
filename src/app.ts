@@ -132,7 +132,9 @@ const emptyAttachment: AttachmentState = { phase: 'none' }
 export function initialState(): AppState {
   return {
     connection: 'connecting',
-    projects: [],
+    // The All sessions bucket is always present, even when the first list
+    // refresh fails and no workspaces are known yet.
+    projects: projectRows([]),
     sessions: [],
     selectedProject: undefined,
     attachment: emptyAttachment,
