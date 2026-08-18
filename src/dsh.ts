@@ -17,8 +17,11 @@
 
 import { AbstractApiClient, type IApiClient } from '@deepseek-ai/dsh-host-apiproxy/client'
 import {
+  RpcId,
   serverRequestSchema,
   transportError,
+  type ClientResponse,
+  type RpcReceipt,
   type RpcResponse,
   type RpcRequest,
   type RpcResult,
@@ -50,12 +53,18 @@ export interface DshPort {
     events: HistoryEntry[]
     hasMore: boolean
   }>>
-  /** Live mux stream: yields stripped MuxFrames once the socket is open. */
-  stream(signal: AbortSignal, onOpen: () => void): AsyncIterable<MuxFrame>
+  /** Live mux stream: yields stripped MuxFrames once the socket is open. The
+   *  envelope's rpcId rides along when present — question/requested answers
+   *  must echo it on /api/respond. */
+  stream(signal: AbortSignal, onOpen: () => void): AsyncIterable<MuxFrame & { rpcId?: RpcId }>
   /** Submit one plain-text prompt to the attached session (queue mode). */
   prompt(sessionId: SessionId, text: string, signal?: AbortSignal): Promise<RpcResult<{
     accepted: true
   }>>
+  /** Answer a host question (or approval) by echoing the server-request's
+   *  rpcId on POST /api/respond. Never retried — a late duplicate response
+   *  would settle a request that may already be gone. */
+  respond(message: ClientResponse, signal?: AbortSignal): Promise<RpcReceipt>
 }
 
 /** Upper bound on one WebSocket message: a hostile host must not be able to
@@ -121,6 +130,8 @@ export interface PortClient {
       command?: { kind: 'success'; text?: string }
     }>>
   }
+  /** Answer a host question by echoing its server-request rpcId. */
+  respond(message: ClientResponse, signal?: AbortSignal): Promise<RpcReceipt>
   events: {
     mux(payload: MuxPayload, signal: AbortSignal, onOpen?: () => void): AsyncIterable<RpcRequest<MuxFrame>>
   }
@@ -138,11 +149,16 @@ export function createDshPort(client: PortClient): DshPort {
       mode: 'queue',
       content: [{ type: 'text', text }],
     }, signal)),
+    // A transport failure folds to a not-pending receipt so the answer flow
+    // can surface a notice; the host treats late duplicates as not-pending.
+    respond: (message, signal) => client.respond(message, signal)
+      .catch(() => ({ accepted: false, reason: 'bad-response' })),
     async *stream(signal, onOpen) {
-      // Strip the RPC envelope from every mux frame; stream errors surface as
-      // the iterable ending, which the app treats as disconnected.
+      // Strip the RPC envelope from every mux frame but keep its rpcId (the
+      // question/requested answer must echo it); stream errors surface as the
+      // iterable ending, which the app treats as disconnected.
       for await (const frame of client.events.mux({}, signal, onOpen)) {
-        yield frame.payload
+        yield { ...frame.payload, rpcId: frame.rpcId }
       }
     },
   }

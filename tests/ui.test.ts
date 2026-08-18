@@ -8,7 +8,7 @@ import { test } from 'node:test'
 
 import { Container, Markdown, getCapabilities, setCapabilities } from '@earendil-works/pi-tui'
 
-import { PickerFrame, assistantMarkdown, deepDivingText, editorPolicy, editorTextAfterSubmit, formatTokens, headerText, isWorking, neutralizeLinks, pickerLabel, reconcileRows, sessionPickerItems, statsText, terminalSafeText, toolPreviewText } from '../src/ui.js'
+import { PickerFrame, assistantMarkdown, deepDivingText, editorPolicy, editorTextAfterSubmit, footerHints, formatTokens, headerText, isWorking, neutralizeLinks, pickerLabel, questionCardText, queuedText, reconcileRows, sessionPickerItems, statsText, terminalSafeText, toolPreviewText } from '../src/ui.js'
 import type { TranscriptRow } from '../src/transcript.js'
 import { contextStyle } from '../src/theme.js'
 
@@ -428,6 +428,60 @@ test('statsText renders a pi-style usage line only while attached', () => {
     },
   } as never
   assert.equal(statsText(zeroWindow), '')
+})
+
+test('queuedText shows the pending prompt count and a preview', () => {
+  assert.equal(queuedText({ phase: 'none' } as never), '')
+  assert.equal(queuedText({ phase: 'attached', queue: [] } as never), '')
+  const item = (id: string, text: string, placement = 'queued') => ({
+    id,
+    placement,
+    message: { role: 'user', content: [{ type: 'text', text }] },
+  })
+  const one = queuedText({ phase: 'attached', queue: [item('m1', 'fix the parser')] } as never)
+  assert.ok(one.includes('1 prompt queued'), one)
+  assert.ok(one.includes('fix the parser'), one)
+  const many = queuedText({ phase: 'attached', queue: [item('m1', 'first'), item('m2', 'second')] } as never)
+  assert.ok(many.includes('2 prompts queued'), many)
+  assert.ok(many.includes('first'), many)
+  // Steering/context items are not part of the queue dock.
+  const onlySteering = queuedText({ phase: 'attached', queue: [item('m1', 'steer', 'steering')] } as never)
+  assert.equal(onlySteering, '')
+  // A prompt with an embedded newline cannot wrap the footer line.
+  const wrapped = queuedText({ phase: 'attached', queue: [item('m1', 'multi\nline prompt')] } as never)
+  assert.ok(!wrapped.includes('\n'), wrapped)
+  assert.ok(wrapped.includes('multi line prompt'), wrapped)
+  // A long prompt is truncated for the one-line preview.
+  const long = queuedText({ phase: 'attached', queue: [item('m1', 'x'.repeat(100))] } as never)
+  assert.ok(long.includes('…'), long)
+})
+
+test('questionCardText renders the question and its numbered options', () => {
+  const text = questionCardText([
+    { id: 'qa', question: 'Approve the change?', options: [{ label: 'Yes' }, { label: 'No' }] },
+  ])
+  assert.ok(text.includes('❓ Approve the change?'), text)
+  assert.ok(text.includes('1. Yes'), text)
+  assert.ok(text.includes('2. No'), text)
+  // No options: just the question. Multi-question requests stack.
+  const plain = questionCardText([{ id: 'qb', question: 'Anything else?' }])
+  assert.equal(plain, '❓ Anything else?')
+  const stacked = questionCardText([
+    { id: 'qa', question: 'A' },
+    { id: 'qb', question: 'B' },
+  ])
+  assert.ok(stacked.includes('❓ A\n❓ B'), stacked)
+  // Host text cannot inject row breaks or escapes.
+  const hostile = questionCardText([{ id: 'qc', question: 'x\ny', options: [{ label: 'z\tw' }] }])
+  assert.ok(!hostile.includes('\n❓') && hostile.includes('x y'), hostile)
+})
+
+test('footerHints switches to answering mode while a question is open', () => {
+  assert.ok(footerHints({ phase: 'none' } as never).includes('Enter send'))
+  assert.ok(footerHints({ phase: 'attached', pendingQuestions: [] } as never).includes('Enter send'))
+  const answering = footerHints({ phase: 'attached', pendingQuestions: [{ rpcId: 'r', questions: [] }] } as never)
+  assert.ok(answering.includes('Answer the question'), answering)
+  assert.ok(!answering.includes('Enter send'), answering)
 })
 
 test('sessionPickerItems renders a notice row for an empty project', () => {

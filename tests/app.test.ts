@@ -119,6 +119,14 @@ class FakePort implements DshPort {
   promptCalls: Array<{ sessionId: string; text: string }> = []
   promptResult: Awaited<ReturnType<DshPort['prompt']>> = { ok: true, value: { accepted: true } }
 
+  respondCalls: Array<{ rpcId: string; value: unknown }> = []
+  respondResult: Awaited<ReturnType<DshPort['respond']>> = { accepted: true }
+
+  async respond(message: Parameters<DshPort['respond']>[0]): Promise<Awaited<ReturnType<DshPort['respond']>>> {
+    this.respondCalls.push({ rpcId: String(message.rpcId), value: message.result })
+    return this.respondResult
+  }
+
   async prompt(sessionId: SessionId, text: string): Promise<Awaited<ReturnType<DshPort['prompt']>>> {
     this.promptCalls.push({ sessionId: String(sessionId), text })
     return this.promptResult

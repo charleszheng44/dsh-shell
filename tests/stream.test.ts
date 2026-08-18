@@ -91,6 +91,14 @@ class FakePort implements DshPort {
   promptCalls: Array<{ sessionId: string; text: string }> = []
   promptResult: Awaited<ReturnType<DshPort['prompt']>> = { ok: true, value: { accepted: true } }
 
+  respondCalls: Array<{ rpcId: string; value: unknown }> = []
+  respondResult: Awaited<ReturnType<DshPort['respond']>> = { accepted: true }
+
+  async respond(message: Parameters<DshPort['respond']>[0]): Promise<Awaited<ReturnType<DshPort['respond']>>> {
+    this.respondCalls.push({ rpcId: String(message.rpcId), value: message.result })
+    return this.respondResult
+  }
+
   async prompt(sessionId: string, text: string): Promise<Awaited<ReturnType<DshPort['prompt']>>> {
     this.promptCalls.push({ sessionId: String(sessionId), text })
     return this.promptResult
@@ -525,6 +533,72 @@ test('a turn opened in history stays working until a buffered turn/end closes it
   await attach
   const last = view.renders.at(-1)?.attachment
   assert.equal(last?.phase === 'attached' && last.turnActive, undefined)
+})
+
+test('session/queue frames drive the attached queue snapshot', async () => {
+  const port = new FakePort()
+  port.historyEvents = { s1: [userText(1, 'q')] }
+  const { app, view } = await booted(port)
+  await app.attach('s1' as never)
+  const queuedItem = (id: string, text: string, placement = 'queued') => ({
+    id,
+    placement,
+    message: { role: 'user', content: [{ type: 'text', text }] },
+  })
+  port.push({ type: 'session/queue', sessionId: 's1' as never, items: [
+    queuedItem('m1', 'fix the parser'),
+    queuedItem('m2', 'run tests'),
+  ] } as never)
+  await flush()
+  const updated = view.renders.at(-1)?.attachment
+  assert.equal(updated?.phase === 'attached' && updated.queue.length, 2)
+  if (updated?.phase === 'attached') {
+    assert.equal(updated.queue[0]?.placement, 'queued')
+  }
+  // A queue snapshot for another session is ignored.
+  port.push({ type: 'session/queue', sessionId: 'other' as never, items: [queuedItem('mx', 'intruder')] } as never)
+  await flush()
+  const afterOther = view.renders.at(-1)?.attachment
+  assert.equal(afterOther?.phase === 'attached' && afterOther.queue.length, 2)
+  // An empty snapshot drains the queue.
+  port.push({ type: 'session/queue', sessionId: 's1' as never, items: [] } as never)
+  await flush()
+  const drained = view.renders.at(-1)?.attachment
+  assert.equal(drained?.phase === 'attached' && drained.queue.length, 0)
+})
+
+test('question/requested and question/resolved frames drive pending questions', async () => {
+  const port = new FakePort()
+  port.historyEvents = { s1: [userText(1, 'q')] }
+  const { app, view } = await booted(port)
+  await app.attach('s1' as never)
+  port.push({ type: 'question/requested', sessionId: 's1' as never, rpcId: 'rpc-q1', questions: [
+    { id: 'qa', question: 'Approve the change?', options: [{ label: 'Yes' }, { label: 'No' }] },
+  ] } as never)
+  await flush()
+  const asked = view.renders.at(-1)?.attachment
+  assert.equal(asked?.phase === 'attached' && asked.pendingQuestions.length, 1)
+  if (asked?.phase === 'attached') {
+    assert.equal(asked.pendingQuestions[0]?.rpcId, 'rpc-q1')
+    assert.equal(asked.pendingQuestions[0]?.questions[0]?.options?.[0]?.label, 'Yes')
+  }
+  // A replay with the same rpcId is not duplicated.
+  port.push({ type: 'question/requested', sessionId: 's1' as never, rpcId: 'rpc-q1', questions: [
+    { id: 'qa', question: 'Approve the change?', options: [{ label: 'Yes' }, { label: 'No' }] },
+  ] } as never)
+  await flush()
+  const replayed = view.renders.at(-1)?.attachment
+  assert.equal(replayed?.phase === 'attached' && replayed.pendingQuestions.length, 1)
+  // A question for another session is ignored.
+  port.push({ type: 'question/requested', sessionId: 'other' as never, rpcId: 'rpc-q2', questions: [] } as never)
+  await flush()
+  const other = view.renders.at(-1)?.attachment
+  assert.equal(other?.phase === 'attached' && other.pendingQuestions.length, 1)
+  // question/resolved settles it.
+  port.push({ type: 'question/resolved', sessionId: 's1' as never, questionRpcId: 'rpc-q1', outcome: 'answered' } as never)
+  await flush()
+  const settled = view.renders.at(-1)?.attachment
+  assert.equal(settled?.phase === 'attached' && settled.pendingQuestions.length, 0)
 })
 
 test('stream end marks disconnected', async () => {

@@ -17,7 +17,7 @@ import type { SessionSummary, WorkspaceId, WorkspaceView } from '@deepseek-ai/ds
 // SessionSummary.projections.values.title is typed; type-only, no runtime cost.
 import type {} from '@deepseek-ai/dsh-session-title/types'
 
-import type { MuxFrame } from '@deepseek-ai/dsh-host-apiproxy/api'
+import type { MuxFrame, QueuedInboxItem, RpcId } from '@deepseek-ai/dsh-host-apiproxy/api'
 
 import type { DshPort, HostDescription } from './dsh.js'
 import { applyEvent, projectEvents, type PartialAssistant, type TranscriptRow } from './transcript.js'
@@ -42,6 +42,28 @@ export interface SessionStats {
   cacheWriteTokens: number
   contextWindow: number
   pressureTokens: number
+}
+
+/** One selectable answer offered to the user (dsh-user-questions shape). */
+export interface QuestionOption {
+  label: string
+  description?: string
+}
+
+/** One question in an ask_user_question request (structural subset). */
+export interface QuestionItem {
+  id: string
+  question: string
+  detail?: string
+  header?: string
+  options?: readonly QuestionOption[]
+  multiSelect?: boolean
+}
+
+/** A pending question request from the host, keyed by its echoed rpcId. */
+export interface PendingQuestion {
+  rpcId: RpcId
+  questions: readonly QuestionItem[]
 }
 
 /**
@@ -73,6 +95,12 @@ export type AttachmentState =
       turnActive: number | undefined
       /** Token/context snapshot from the session list, for the footer. */
       stats: SessionStats | undefined
+      /** Transient inbox snapshot from session/queue frames: prompts submitted
+       *  but not yet claimed by the agent. */
+      queue: readonly QueuedInboxItem[]
+      /** Open question requests from the host (question/requested frames not
+       *  yet settled by question/resolved). */
+      pendingQuestions: readonly PendingQuestion[]
     }
 
 /** Complete UI state, rendered by the view on every change. */
@@ -146,6 +174,37 @@ export function sessionTitle(session: SessionSummary): string {
     if (name !== '' && name !== '/') return name
   }
   return session.sessionId
+}
+
+/** One question answer payload part, as the host's schema expects it. */
+export interface QuestionAnswerItem {
+  id: string
+  selected: string[]
+  custom?: string
+}
+
+/** Turn a typed answer into per-question answers: a number (or comma list)
+ *  picks options by position, an exact option label picks that option, and
+ *  anything else becomes a custom answer. */
+export function parseQuestionAnswers(questions: readonly QuestionItem[], input: string): QuestionAnswerItem[] {
+  const trimmed = input.trim()
+  const numbers = trimmed.split(',')
+    .map((part) => part.trim())
+    .filter((part) => /^\d+$/.test(part))
+    .map(Number)
+  return questions.map((question) => {
+    const options = question.options ?? []
+    if (numbers.length > 0 && options.length > 0) {
+      const selected = numbers
+        .filter((n) => n >= 1 && n <= options.length)
+        .map((n) => options[n - 1]?.label ?? '')
+        .filter((label) => label !== '')
+      return { id: question.id, selected }
+    }
+    const exact = options.find((option) => option.label.toLowerCase() === trimmed.toLowerCase())
+    if (exact !== undefined) return { id: question.id, selected: [exact.label] }
+    return { id: question.id, selected: [], custom: trimmed }
+  })
 }
 
 /** Footer stats from the session list snapshot; undefined when the host
@@ -310,12 +369,52 @@ export class App {
   }
 
   /** Route one mux frame: buffer or apply selected-session events, ignore the rest. */
-  private onFrame(frame: MuxFrame): void {
+  private onFrame(frame: MuxFrame & { rpcId?: RpcId }): void {
     // Once closed or disconnected, no further frame may mutate the view.
     if (this.closed || this.state.connection !== 'connected') return
     if (frame.type === 'stream/error') {
       this.setState({ connection: 'disconnected', notice: 'Disconnected: stream error' })
       this.streamAborted = true
+      return
+    }
+    if (frame.type === 'session/queue') {
+      // Transient inbox snapshot: prompts submitted but not yet claimed by
+      // the agent. Only the attached session's queue is displayed.
+      const attachment = this.state.attachment
+      if (attachment.phase === 'attached' && attachment.sessionId === frame.sessionId) {
+        this.setState({ attachment: { ...attachment, queue: frame.items } })
+      }
+      return
+    }
+    if (frame.type === 'question/requested') {
+      const attachment = this.state.attachment
+      if (attachment.phase === 'attached' && attachment.sessionId === frame.sessionId && frame.rpcId !== undefined) {
+        const pending: PendingQuestion = {
+          rpcId: frame.rpcId,
+          questions: frame.questions.map((question) => ({
+            id: question.id,
+            question: question.question,
+            ...(question.detail === undefined ? {} : { detail: question.detail }),
+            ...(question.header === undefined ? {} : { header: question.header }),
+            ...(question.options === undefined ? {} : { options: question.options }),
+            ...(question.multiSelect === undefined ? {} : { multiSelect: question.multiSelect }),
+          })),
+        }
+        const existing = attachment.pendingQuestions.some((question) => question.rpcId === pending.rpcId)
+        if (!existing) {
+          this.setState({ attachment: { ...attachment, pendingQuestions: [...attachment.pendingQuestions, pending] } })
+        }
+      }
+      return
+    }
+    if (frame.type === 'question/resolved') {
+      const attachment = this.state.attachment
+      if (attachment.phase === 'attached' && attachment.sessionId === frame.sessionId) {
+        const remaining = attachment.pendingQuestions.filter((question) => question.rpcId !== frame.questionRpcId)
+        if (remaining.length !== attachment.pendingQuestions.length) {
+          this.setState({ attachment: { ...attachment, pendingQuestions: remaining } })
+        }
+      }
       return
     }
     if (frame.type !== 'session/event') return
@@ -577,6 +676,8 @@ export class App {
         pendingTools,
         turnActive,
         stats,
+        queue: [],
+        pendingQuestions: [],
       },
       notice: undefined,
     })
@@ -598,6 +699,14 @@ export class App {
     }
     const trimmed = text.trim()
     if (trimmed === '') return { ok: false, reason: 'blank' }
+    // While a question is open, the composer answers the question instead of
+    // queuing a prompt: a number (or comma-separated numbers) selects options,
+    // text that matches an option label selects it, anything else is a custom
+    // answer. The echoed rpcId settles the host's pending request.
+    const pending = attachment.pendingQuestions[0]
+    if (pending !== undefined) {
+      return this.answerQuestion(attachment, pending, trimmed)
+    }
     if (trimmed.startsWith('/')) {
       // Design: slash commands are rejected locally, the text is retained,
       // and the footer instruction is surfaced. Disarm any pending accepted
@@ -653,6 +762,46 @@ export class App {
     if (this.pendingAccepted === generation) {
       this.setState({ notice: 'Accepted by DSH' })
     }
+    return { ok: true }
+  }
+
+  /** Answer the first open question: build the answer payload from the typed
+   *  text and echo the request's rpcId on /api/respond. The editor clears on
+   *  acceptance; a rejection keeps the text and shows the notice. */
+  private async answerQuestion(
+    attachment: Extract<AttachmentState, { phase: 'attached' }>,
+    pending: PendingQuestion,
+    text: string,
+  ): Promise<SubmitResult> {
+    const sessionId = attachment.sessionId
+    const generation = attachment.generation
+    this.setState({ attachment: { ...attachment, sending: true } })
+    const answers = parseQuestionAnswers(pending.questions, text)
+    const receipt = await this.port.respond({
+      type: 'client-response',
+      rpcId: pending.rpcId,
+      result: { ok: true, value: { sessionId, answer: { answers } } },
+    }, this.signal)
+    const current = this.state.attachment
+    if (this.closed
+      || this.state.connection !== 'connected'
+      || current.phase !== 'attached'
+      || current.generation !== generation
+      || current.sessionId !== sessionId) {
+      if (!this.closed && current.phase === 'attached' && current.generation === generation) {
+        this.setState({ attachment: { ...current, sending: false } })
+      }
+      return { ok: false, reason: 'stale' }
+    }
+    this.setState({ attachment: { ...current, sending: false } })
+    if (!receipt.accepted) {
+      this.setState({ notice: receipt.reason === 'not-pending' ? 'Question already answered' : 'Answer not accepted' })
+      return { ok: false, reason: 'rejected', error: 'answer not accepted' }
+    }
+    // The host settles the request with question/resolved; drop the pending
+    // entry now so the card and the answer mode clear immediately.
+    const remaining = current.pendingQuestions.filter((question) => question.rpcId !== pending.rpcId)
+    this.setState({ attachment: { ...current, sending: false, pendingQuestions: remaining }, notice: 'Answered' })
     return { ok: true }
   }
 

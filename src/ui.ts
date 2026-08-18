@@ -26,7 +26,8 @@ import {
   type SelectItem,
 } from '@earendil-works/pi-tui'
 
-import type { AppState, AppView, ProjectRow, SessionRow, SubmitResult } from './app.js'
+import type { AppState, AppView, ProjectRow, QuestionItem, SessionRow, SubmitResult } from './app.js'
+import type { QueuedInboxItem } from '@deepseek-ai/dsh-host-apiproxy/api'
 import { partialSegments, type AssistantSegment, type TranscriptRow } from './transcript.js'
 import {
   assistantMarker,
@@ -36,6 +37,7 @@ import {
   headerStyle,
   markdownTheme,
   pickerPanelStyle,
+  questionBoxBg,
   toolBoxBg,
   toolErrorBoxBg,
   toolOutputStyle,
@@ -329,9 +331,16 @@ export class TerminalView implements AppView {
   private readonly working = new Text('', 0, 0)
   /** First-run hint while no session is attached. */
   private readonly hint = new Text('', 1, 0)
+  /** Host question card: a boxed panel at the transcript tail while a
+   *  question is open; the composer answers it. */
+  private readonly questionBox = new Box(1, 1, questionBoxBg)
+  private readonly questionText = new Text('', 1, 0)
   private readonly header = new Text('', 1, 0)
   /** pi-style usage/context line above the footer hints. */
   private readonly stats = new Text('', 1, 0)
+  /** Pending prompt queue line; empty (zero rows) when nothing is queued. */
+  private readonly queue = new Text('', 1, 0)
+  private readonly hints = new Text('', 1, 0)
   private readonly editor = new Editor(this.tui, editorTheme, { paddingX: 1 })
   private overlay: OverlayHandle | undefined
 
@@ -342,18 +351,12 @@ export class TerminalView implements AppView {
     private readonly onSubmit: (text: string) => Promise<SubmitResult>,
   ) {
     this.editor.disableSubmit = true
+    this.questionBox.addChild(this.questionText)
     const footer = new VStack([
       // pi-style usage/context line; empty (zero rows) when unattached.
       { component: this.stats, basis: 'auto', grow: 0 },
-      {
-        component: new Text(
-          footerStyle('Ctrl+P project  Ctrl+S session  Ctrl+C quit\nEnter send · ↑ history · Approvals and questions: use Web UI'),
-          1,
-          0,
-        ),
-        basis: 'auto',
-        grow: 0,
-      },
+      { component: this.queue, basis: 'auto', grow: 0 },
+      { component: this.hints, basis: 'auto', grow: 0 },
     ])
     const scroll = new ScrollView(this.transcript, {
       follow: 'end',
@@ -442,6 +445,8 @@ export class TerminalView implements AppView {
     }
     this.working.setText(this.workingActive ? workingStyle(deepDivingText(this.workingDots)) : '')
     this.stats.setText(statsText(state.attachment))
+    this.queue.setText(queuedText(state.attachment))
+    this.hints.setText(footerHints(state.attachment))
     this.renderTranscript(state.attachment)
     const policy = editorPolicy(state, this.overlay !== undefined)
     this.editorEnabled = policy.enabled
@@ -479,6 +484,16 @@ export class TerminalView implements AppView {
       this.transcript.addChild(this.partialRow)
     } else {
       this.partial.setText('')
+    }
+    // An open host question renders as a boxed card above the status line;
+    // the composer answers it until question/resolved settles it.
+    this.transcript.removeChild(this.questionBox)
+    if (attachment.phase === 'attached' && attachment.pendingQuestions.length > 0) {
+      const pending = attachment.pendingQuestions[0]
+      if (pending !== undefined) {
+        this.questionText.setText(questionCardText(pending.questions))
+        this.transcript.addChild(this.questionBox)
+      }
     }
     // The Deep diving status is the very last row of the transcript, below
     // the streaming partial — the Web UI renders its turn status at the tail
@@ -675,6 +690,46 @@ export function statsText(attachment: AppState['attachment']): string {
   const write = cacheWriteTokens > 0 ? ` W${formatTokens(cacheWriteTokens)}` : ''
   const context = contextStyle(percent, `${percent.toFixed(1)}%/${formatTokens(contextWindow)}`)
   return `${footerStyle(`↑${formatTokens(uncachedInputTokens)} ↓${formatTokens(outputTokens)}${read}${write} `)}${context}`
+}
+
+/** One-line queue status: how many prompts are queued, with the first prompt's
+ *  text preview — the terminal stand-in for the Web UI's queue dock. */
+export function queuedText(attachment: AppState['attachment']): string {
+  if (attachment.phase !== 'attached') return ''
+  const queued = attachment.queue.filter((item) => item.placement === 'queued')
+  if (queued.length === 0) return ''
+  const first = queued[0]
+  const preview = first === undefined ? '' : promptPreview(first)
+  const count = queued.length === 1 ? '1 prompt' : `${queued.length} prompts`
+  return footerStyle(preview === '' ? `⏳ ${count} queued` : `⏳ ${count} queued: "${preview}"`)
+}
+
+/** First text part of a queued message, collapsed and bounded for one line. */
+function promptPreview(item: QueuedInboxItem): string {
+  const content = item.message.content
+  const part = content?.find((candidate) => candidate.type === 'text' && typeof candidate.text === 'string')
+  if (part === undefined || part.type !== 'text') return ''
+  const oneLine = terminalSafeText(part.text).replace(/\s+/g, ' ').trim()
+  return oneLine.length > 48 ? `${oneLine.slice(0, 48)}…` : oneLine
+}
+
+/** Footer hints: while a question is open the composer answers it. */
+export function footerHints(attachment: AppState['attachment']): string {
+  const question = attachment.phase === 'attached' && attachment.pendingQuestions.length > 0
+  return footerStyle(question
+    ? 'Ctrl+P project  Ctrl+S session  Ctrl+C quit\nAnswer the question: a number picks an option, any text answers'
+    : 'Ctrl+P project  Ctrl+S session  Ctrl+C quit\nEnter send · ↑ history · Approvals and questions: use Web UI')
+}
+
+/** The question card's content: the question text and its numbered options. */
+export function questionCardText(questions: readonly QuestionItem[]): string {
+  return questions.map((question) => {
+    const options = (question.options ?? [])
+      .map((option, index) => `  ${index + 1}. ${terminalSafeText(option.label).replace(/\s+/g, ' ').trim()}`)
+      .join('\n')
+    const text = terminalSafeText(question.question).replace(/\s+/g, ' ').trim()
+    return `❓ ${text}${options === '' ? '' : `\n${options}`}`
+  }).join('\n')
 }
 
 /** Picker items for a session list: the empty case shows a notice row. */

@@ -30,6 +30,7 @@ function stubClient(overrides: {
       history: async () => ok({ events: [], hasMore: false }),
       prompt: async () => ok({ accepted: true }),
     },
+    respond: async () => ({ accepted: true }),
     events: {
       mux: async function* mux() { return },
     },
@@ -38,6 +39,7 @@ function stubClient(overrides: {
     host: { ...base.host, ...overrides.host },
     workspace: { ...base.workspace, ...overrides.workspace },
     sessions: { ...base.sessions, ...overrides.sessions },
+    respond: base.respond,
     events: { ...base.events, ...overrides.events },
   }
 }

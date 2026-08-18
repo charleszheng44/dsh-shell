@@ -13,7 +13,7 @@ import { test } from 'node:test'
 import type { MuxFrame } from '@deepseek-ai/dsh-host-apiproxy/api'
 import type { SessionEvent } from '@deepseek-ai/dsh-session/types'
 
-import { App, type AppState, type AppView } from '../src/app.js'
+import { App, parseQuestionAnswers, type AppState, type AppView } from '../src/app.js'
 import type { DshPort } from '../src/dsh.js'
 
 class FakeView implements AppView {
@@ -31,6 +31,14 @@ class FakePort implements DshPort {
   historyEvents: Record<string, SessionEvent[]> = {}
   promptCalls: Array<{ sessionId: string; text: string; mode: string }> = []
   promptResult: Awaited<ReturnType<DshPort['prompt']>> = { ok: true, value: { accepted: true } }
+
+  respondCalls: Array<{ rpcId: string; value: unknown }> = []
+  respondResult: Awaited<ReturnType<DshPort['respond']>> = { accepted: true }
+
+  async respond(message: Parameters<DshPort['respond']>[0]): Promise<Awaited<ReturnType<DshPort['respond']>>> {
+    this.respondCalls.push({ rpcId: String(message.rpcId), value: message.result })
+    return this.respondResult
+  }
   streamEnded = false
   private frames: MuxFrame[] = []
   private waiters: Array<() => void> = []
@@ -78,6 +86,10 @@ class FakePort implements DshPort {
     this.frames.push(frame)
     for (const waiter of this.waiters.splice(0)) waiter()
   }
+}
+
+async function flush(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 10))
 }
 
 async function booted(port: FakePort): Promise<{ app: App; view: FakeView }> {
@@ -172,6 +184,57 @@ test('a late response from an older session generation is dropped', async () => 
   release({ ok: true, value: { accepted: true } })
   const result = await pending
   assert.deepEqual(result, { ok: false, reason: 'stale' })
+})
+
+test('a pending question routes the composer to answering instead of prompting', async () => {
+  const port = new FakePort()
+  port.historyEvents = { s1: [] }
+  const { app, view } = await booted(port)
+  await app.attach('s1' as never)
+  // A question arrives on the mux.
+  port.push({ type: 'question/requested', sessionId: 's1' as never, rpcId: 'rpc-q1', questions: [
+    { id: 'qa', question: 'Approve?', options: [{ label: 'Yes' }, { label: 'No' }] },
+  ] } as never)
+  await flush()
+  // Enter answers the question and never calls session.prompt.
+  const result = await app.submit('1')
+  assert.deepEqual(result, { ok: true })
+  assert.equal(port.promptCalls.length, 0)
+  assert.equal(port.respondCalls.length, 1)
+  const call = port.respondCalls[0]
+  assert.equal(call?.rpcId, 'rpc-q1')
+  const value = (call?.value as { ok: true; value: { answer: { answers: unknown[] } } }).value
+  assert.deepEqual(value.answer.answers, [{ id: 'qa', selected: ['Yes'] }])
+  // The pending question is dropped after the answer.
+  const after = view.renders.at(-1)?.attachment
+  assert.equal(after?.phase === 'attached' && after.pendingQuestions.length, 0)
+})
+
+test('parseQuestionAnswers: numbers, labels, and custom text', async () => {
+  const questions = [
+    { id: 'q1', question: 'Pick', options: [{ label: 'alpha' }, { label: 'beta' }, { label: 'gamma' }] },
+    { id: 'q2', question: 'Free form' },
+  ]
+  // A number selects by position.
+  assert.deepEqual(parseQuestionAnswers(questions, '2'), [
+    { id: 'q1', selected: ['beta'] },
+    { id: 'q2', selected: [], custom: '2' },
+  ])
+  // An exact label match selects that option.
+  assert.deepEqual(parseQuestionAnswers(questions, 'GAMMA'), [
+    { id: 'q1', selected: ['gamma'] },
+    { id: 'q2', selected: [], custom: 'GAMMA' },
+  ])
+  // Anything else is a custom answer.
+  assert.deepEqual(parseQuestionAnswers(questions, 'do the other thing'), [
+    { id: 'q1', selected: [], custom: 'do the other thing' },
+    { id: 'q2', selected: [], custom: 'do the other thing' },
+  ])
+  // Out-of-range numbers select nothing.
+  assert.deepEqual(parseQuestionAnswers(questions, '9'), [
+    { id: 'q1', selected: [] },
+    { id: 'q2', selected: [], custom: '9' },
+  ])
 })
 
 test('submission is disabled when disconnected', async () => {
