@@ -6,6 +6,7 @@
  */
 
 import assert from 'node:assert/strict'
+import { basename } from 'node:path'
 import { test } from 'node:test'
 
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
@@ -201,6 +202,18 @@ test('title fallback: projection title, then cwd basename, then session id', () 
 
   const bare = summary({ sessionId: 's3' as never })
   assert.equal(sessionRows([], [bare], [], 'all')[0]?.title, 's3')
+})
+
+test('title fallback handles trailing-slash and Windows-style cwds', () => {
+  // A trailing slash must not produce an empty basename.
+  const trailing = summary({ sessionId: 's4' as never, cwd: '/Users/me/projects/intentlab/' })
+  assert.equal(sessionRows([], [trailing], [], 'all')[0]?.title, 'intentlab')
+
+  // A Windows-style cwd falls back through the platform's node:path basename
+  // (the exact string differs per platform, so compare against it directly).
+  const windowsCwd = 'C:\\Users\\me\\projects\\intentlab'
+  const win = summary({ sessionId: 's5' as never, cwd: windowsCwd })
+  assert.equal(sessionRows([], [win], [], 'all')[0]?.title, basename(windowsCwd))
 })
 
 test('empty project opens the session picker with no rows and never creates a session', async () => {
