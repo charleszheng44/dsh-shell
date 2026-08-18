@@ -379,42 +379,35 @@ export class App {
     }
     if (frame.type === 'session/queue') {
       // Transient inbox snapshot: prompts submitted but not yet claimed by
-      // the agent. Only the attached session's queue is displayed.
-      const attachment = this.state.attachment
-      if (attachment.phase === 'attached' && attachment.sessionId === frame.sessionId) {
-        this.setState({ attachment: { ...attachment, queue: frame.items } })
-      }
+      // the agent. Cached per session so a replay before attach is still
+      // shown once the session is attached.
+      this.updateInbox(frame.sessionId, (entry) => ({ ...entry, queue: frame.items }))
       return
     }
     if (frame.type === 'question/requested') {
-      const attachment = this.state.attachment
-      if (attachment.phase === 'attached' && attachment.sessionId === frame.sessionId && frame.rpcId !== undefined) {
-        const pending: PendingQuestion = {
-          rpcId: frame.rpcId,
-          questions: frame.questions.map((question) => ({
-            id: question.id,
-            question: question.question,
-            ...(question.detail === undefined ? {} : { detail: question.detail }),
-            ...(question.header === undefined ? {} : { header: question.header }),
-            ...(question.options === undefined ? {} : { options: question.options }),
-            ...(question.multiSelect === undefined ? {} : { multiSelect: question.multiSelect }),
-          })),
-        }
-        const existing = attachment.pendingQuestions.some((question) => question.rpcId === pending.rpcId)
-        if (!existing) {
-          this.setState({ attachment: { ...attachment, pendingQuestions: [...attachment.pendingQuestions, pending] } })
-        }
+      if (frame.rpcId === undefined) return
+      const pending: PendingQuestion = {
+        rpcId: frame.rpcId,
+        questions: frame.questions.map((question) => ({
+          id: question.id,
+          question: question.question,
+          ...(question.detail === undefined ? {} : { detail: question.detail }),
+          ...(question.header === undefined ? {} : { header: question.header }),
+          ...(question.options === undefined ? {} : { options: question.options }),
+          ...(question.multiSelect === undefined ? {} : { multiSelect: question.multiSelect }),
+        })),
       }
+      this.updateInbox(frame.sessionId, (entry) => {
+        if (entry.questions.some((question) => question.rpcId === pending.rpcId)) return entry
+        return { ...entry, questions: [...entry.questions, pending] }
+      })
       return
     }
     if (frame.type === 'question/resolved') {
-      const attachment = this.state.attachment
-      if (attachment.phase === 'attached' && attachment.sessionId === frame.sessionId) {
-        const remaining = attachment.pendingQuestions.filter((question) => question.rpcId !== frame.questionRpcId)
-        if (remaining.length !== attachment.pendingQuestions.length) {
-          this.setState({ attachment: { ...attachment, pendingQuestions: remaining } })
-        }
-      }
+      this.updateInbox(frame.sessionId, (entry) => ({
+        ...entry,
+        questions: entry.questions.filter((question) => question.rpcId !== frame.questionRpcId),
+      }))
       return
     }
     if (frame.type !== 'session/event') return
@@ -472,6 +465,26 @@ export class App {
     // numbers come from the session-list projection, so re-snapshot them
     // instead of freezing the attach-time values for the whole attachment.
     if (frame.event.type === 'turn/end') void this.refreshStats()
+  }
+
+  /** Apply a queue/question update to the per-session inbox cache, and to
+   *  the attachment when the frame belongs to the attached session. Empty
+   *  snapshots prune the cache entry. */
+  private updateInbox(
+    sessionId: SessionId,
+    update: (entry: { queue: readonly QueuedInboxItem[]; questions: readonly PendingQuestion[] }) => { queue: readonly QueuedInboxItem[]; questions: readonly PendingQuestion[] },
+  ): void {
+    const key = String(sessionId)
+    const entry = update(this.inbox.get(key) ?? { queue: [], questions: [] })
+    if (entry.queue.length === 0 && entry.questions.length === 0) {
+      this.inbox.delete(key)
+    } else {
+      this.inbox.set(key, entry)
+    }
+    const attachment = this.state.attachment
+    if (attachment.phase === 'attached' && String(attachment.sessionId) === key) {
+      this.setState({ attachment: { ...attachment, queue: entry.queue, pendingQuestions: entry.questions } })
+    }
   }
 
   /** Monotonic token so an older in-flight stats refresh can never overwrite
@@ -539,6 +552,11 @@ export class App {
     sessions: readonly SessionSummary[]
     archived: readonly SessionId[]
   } = { workspaces: [], sessions: [], archived: [] }
+
+  /** Transient inbox state cached per session from mux replays and updates:
+   *  queue and question frames can arrive before the user attaches (the host
+   *  replays them on stream open), and the attachment seeds from this cache. */
+  private inbox = new Map<string, { queue: readonly QueuedInboxItem[]; questions: readonly PendingQuestion[] }>()
 
   /** Ctrl+P: open the project picker (refreshes both lists first). */
   async openProjectPicker(): Promise<void> {
@@ -676,8 +694,9 @@ export class App {
         pendingTools,
         turnActive,
         stats,
-        queue: [],
-        pendingQuestions: [],
+        // Pre-attach queue/question frames (mux replay) seed the attachment.
+        queue: this.inbox.get(String(sessionId))?.queue ?? [],
+        pendingQuestions: this.inbox.get(String(sessionId))?.questions ?? [],
       },
       notice: undefined,
     })

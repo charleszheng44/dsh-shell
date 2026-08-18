@@ -567,6 +567,32 @@ test('session/queue frames drive the attached queue snapshot', async () => {
   assert.equal(drained?.phase === 'attached' && drained.queue.length, 0)
 })
 
+test('queue and question frames that arrive before attach seed the attachment', async () => {
+  const port = new FakePort()
+  port.historyEvents = { s1: [] }
+  const { app, view } = await booted(port)
+  // The host replays the inbox state on stream open, before any attach.
+  port.push({ type: 'session/queue', sessionId: 's1' as never, items: [
+    { id: 'm1', placement: 'queued', message: { id: 'm1', role: 'user', content: [{ type: 'text', text: 'queued prompt' }], source: { kind: 'user' } } },
+  ] } as never)
+  port.push({ type: 'question/requested', sessionId: 's1' as never, rpcId: 'rpc-q0', questions: [
+    { id: 'qa', question: 'Approve?' },
+  ] } as never)
+  await flush()
+  await app.attach('s1' as never)
+  const attached = view.renders.at(-1)?.attachment
+  assert.equal(attached?.phase, 'attached')
+  if (attached?.phase === 'attached') {
+    assert.equal(attached.queue.length, 1)
+    assert.equal(attached.pendingQuestions.length, 1)
+    assert.equal(attached.pendingQuestions[0]?.rpcId, 'rpc-q0')
+  }
+  // Empty snapshots prune the cache: a later attach seeds nothing.
+  port.push({ type: 'session/queue', sessionId: 's1' as never, items: [] } as never)
+  port.push({ type: 'question/resolved', sessionId: 's1' as never, questionRpcId: 'rpc-q0', outcome: 'cancelled' } as never)
+  await flush()
+})
+
 test('question/requested and question/resolved frames drive pending questions', async () => {
   const port = new FakePort()
   port.historyEvents = { s1: [userText(1, 'q')] }
