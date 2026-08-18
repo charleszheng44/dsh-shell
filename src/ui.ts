@@ -285,7 +285,7 @@ function rowComponent(row: TranscriptRow): Component {
   }
   if (row.kind === 'toolResult') {
     const box = new Box(1, 1, toolResultBoxBg)
-    box.addChild(new Text(toolOutputStyle(terminalSafeText(toolPreviewText(row.output))), 0, 0))
+    box.addChild(new Text(toolOutputStyle(terminalSafeText(toolPreviewText(row.output, row.truncated))), 0, 0))
     return box
   }
   return new HStack([
@@ -295,12 +295,13 @@ function rowComponent(row: TranscriptRow): Component {
 }
 
 /** Bounded tool-output preview: pi shows the first 10 lines of a result with
- *  a "+N more lines" note. When the output itself was truncated by the
- *  projector, the note names the truncation so the bound is not hidden. */
-export function toolPreviewText(output: string): string {
+ *  a "+N more lines" note. `truncated` comes from the projector's own bound
+ *  (never sniffed from the content), and the note names the truncation so
+ *  the bound is not hidden; the marker line, when present, is not counted
+ *  as content. */
+export function toolPreviewText(output: string, truncated: boolean): string {
   const lines = output.split('\n')
-  const truncated = lines.at(-1) === '… (output truncated)'
-  const body = truncated ? lines.slice(0, -1) : lines
+  const body = truncated && lines.at(-1) === '… (output truncated)' ? lines.slice(0, -1) : lines
   const preview = body.slice(0, TOOL_OUTPUT_PREVIEW_LINES)
   const remaining = body.length - preview.length
   if (remaining === 0) return preview.join('\n')
@@ -430,6 +431,7 @@ export class TerminalView implements AppView {
     } else if (!this.workingActive && this.workingTimer !== undefined) {
       clearInterval(this.workingTimer)
       this.workingTimer = undefined
+      this.workingDots = 0 // next working period starts from a clean frame
     }
     this.working.setText(this.workingActive ? workingStyle(deepDivingText(this.workingDots)) : '')
     this.tui.requestRender()

@@ -393,7 +393,7 @@ test('a tool/result appends a named, bounded output row', () => {
   ])
   assert.deepEqual(state.rows, [
     { kind: 'toolCall', name: 'run_code', args: '{"code":"x"}' },
-    { kind: 'toolResult', name: 'run_code', output: 'line one\nline two\nline three' },
+    { kind: 'toolResult', name: 'run_code', output: 'line one\nline two\nline three', truncated: false },
   ])
 })
 
@@ -427,5 +427,30 @@ test('tool output is truncated to a bounded number of lines', () => {
     const lines = row.output.split('\n')
     assert.ok(lines.length <= 25)
     assert.match(row.output, /output truncated/)
+    assert.equal(row.truncated, true)
+  }
+  // A short result is never flagged truncated, even when its own last line
+  // happens to read like the marker (the view must not sniff content).
+  const marker = projectEvents([
+    assistantMessage(1, 1, 1, [{ type: 'tool-call', id: 'call-2', name: 'bash', arguments: '{}' }]),
+    toolResultEvent(2, 'call-2', '… (output truncated)'),
+  ])
+  const row2 = marker.rows.find((r) => r.kind === 'toolResult')
+  assert.equal(row2?.kind, 'toolResult')
+  if (row2?.kind === 'toolResult') {
+    assert.equal(row2.truncated, false)
+    assert.equal(row2.output, '… (output truncated)')
+  }
+  // The 4000-char cap also flags truncation (mid-line marker).
+  const huge = 'x'.repeat(4001)
+  const capped = projectEvents([
+    assistantMessage(1, 1, 1, [{ type: 'tool-call', id: 'call-3', name: 'bash', arguments: '{}' }]),
+    toolResultEvent(2, 'call-3', huge),
+  ])
+  const row3 = capped.rows.find((r) => r.kind === 'toolResult')
+  assert.equal(row3?.kind, 'toolResult')
+  if (row3?.kind === 'toolResult') {
+    assert.equal(row3.truncated, true)
+    assert.equal(row3.output.length, 4000 + '… (output truncated)'.length)
   }
 })

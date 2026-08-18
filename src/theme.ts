@@ -34,8 +34,9 @@ function hexToRgb(hex: string): [number, number, number] {
 
 /** Closest xterm 256-color index: the 6x6x6 cube, or the grayscale ramp
  *  when the color is near-neutral (the ramp step for a mean m is
- *  8 + 10k, so the nearest step is k = round((m - 8) / 10)). */
-function to256([r, g, b]: [number, number, number]): number {
+ *  8 + 10k, so the nearest step is k = round((m - 8) / 10)). Exported for
+ *  tests; every index is in [16, 255]. */
+export function to256([r, g, b]: [number, number, number]): number {
   const ramp = [0, 95, 135, 175, 215, 255]
   const nearest = (v: number): number => {
     let best = 0

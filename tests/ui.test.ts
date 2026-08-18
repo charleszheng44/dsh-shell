@@ -434,6 +434,12 @@ test('isWorking is true only for an attached session with activity', () => {
     attachment: { phase: 'attached', sending: false, turnActive: 3 },
   } as never
   assert.equal(isWorking(openTurn), true)
+  // Turn 0 is a real turn number and must count as working (not falsy).
+  const turnZero = {
+    connection: 'connected',
+    attachment: { phase: 'attached', sending: false, turnActive: 0 },
+  } as never
+  assert.equal(isWorking(turnZero), true)
   // Loading, none, and disconnected attachments are never working.
   assert.equal(isWorking({ connection: 'connected', attachment: { phase: 'loading', buffered: [] } } as never), false)
   assert.equal(isWorking({ connection: 'connected', attachment: { phase: 'none' } } as never), false)
@@ -442,10 +448,14 @@ test('isWorking is true only for an attached session with activity', () => {
 
 test('toolPreviewText shows 10 lines, a +N note, and names truncation', () => {
   const short = Array.from({ length: 10 }, (_, i) => `line ${i + 1}`).join('\n')
-  assert.equal(toolPreviewText(short), short)
+  assert.equal(toolPreviewText(short, false), short)
   const eleven = `${short}\nline 11`
-  assert.equal(toolPreviewText(eleven), `${short}\n… +1 more lines`)
+  assert.equal(toolPreviewText(eleven, false), `${short}\n… +1 more lines`)
   // A projector-truncated output (>24 lines + marker) keeps the marker visible.
   const many = Array.from({ length: 24 }, (_, i) => `l${i}`).join('\n') + '\n… (output truncated)'
-  assert.equal(toolPreviewText(many), `${Array.from({ length: 10 }, (_, i) => `l${i}`).join('\n')}\n… +14 more lines (output truncated)`)
+  assert.equal(toolPreviewText(many, true), `${Array.from({ length: 10 }, (_, i) => `l${i}`).join('\n')}\n… +14 more lines (output truncated)`)
+  // The flag drives the note; a genuine last line that reads like the marker
+  // must NOT be dropped when the output was not truncated.
+  const markerLooking = `${short}\n… (output truncated)`
+  assert.equal(toolPreviewText(markerLooking, false), `${short}\n… +1 more lines`)
 })

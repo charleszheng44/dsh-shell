@@ -447,7 +447,7 @@ test('live tool/result folds into a named output row after a tool-call message',
     assert.deepEqual(last.attachment.transcript, [
       { kind: 'user', text: 'q' },
       { kind: 'toolCall', name: 'run_code', args: '{"code":"x"}' },
-      { kind: 'toolResult', name: 'run_code', output: 'out' },
+      { kind: 'toolResult', name: 'run_code', output: 'out', truncated: false },
     ])
   }
 })
@@ -467,6 +467,32 @@ test('live turn/start and turn/end drive the working flag', async () => {
   await flush()
   const closed = view.renders.at(-1)?.attachment
   assert.equal(closed?.phase === 'attached' && closed.turnActive, undefined)
+})
+
+test('a turn opened in history stays working until a buffered turn/end closes it', async () => {
+  const port = new FakePort()
+  port.historyEvents = {
+    s1: [
+      userText(1, 'q'),
+      { type: 'turn/start', seq: 2, time: 0, data: { turn: 0 } } as never,
+    ],
+  }
+  const { app, view } = await booted(port)
+  // While history loads, the turn/end for the open turn arrives on the mux.
+  let releaseHistory: (value: Awaited<ReturnType<DshPort['loadHistory']>>) => void = () => undefined
+  const original = port.loadHistory.bind(port)
+  port.loadHistory = (sessionId) => new Promise((resolve) => {
+    releaseHistory = resolve
+    void original(sessionId)
+  })
+  const attach = app.attach('s1' as never)
+  await Promise.resolve()
+  port.push(sessionFrame('s1', { type: 'turn/end', seq: 3, time: 0, data: { turn: 0, reason: { kind: 'stop' } } } as never))
+  await flush()
+  releaseHistory({ ok: true, value: { events: [{ event: userText(1, 'q') }, { event: { type: 'turn/start', seq: 2, time: 0, data: { turn: 0 } } as never }], hasMore: false } })
+  await attach
+  const last = view.renders.at(-1)?.attachment
+  assert.equal(last?.phase === 'attached' && last.turnActive, undefined)
 })
 
 test('stream end marks disconnected', async () => {

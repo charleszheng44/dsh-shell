@@ -24,7 +24,7 @@ export type TranscriptRow =
   | { kind: 'user'; text: string }
   | { kind: 'assistant'; segments: readonly AssistantSegment[] }
   | { kind: 'toolCall'; name: string; args?: string }
-  | { kind: 'toolResult'; name: string; output: string }
+  | { kind: 'toolResult'; name: string; output: string; truncated: boolean }
 
 /** Per-block-index accumulator inside a partial. */
 export interface PartialBlock {
@@ -97,16 +97,24 @@ function compactToolArgs(args: string): string {
   return oneLine.length > TOOL_ARGS_MAX ? `${oneLine.slice(0, TOOL_ARGS_MAX)}…` : oneLine
 }
 
-/** Bound a tool output so a verbose result cannot dominate the transcript. */
-function truncateOutput(text: string): string {
-  const capped = text.length > TOOL_OUTPUT_MAX_CHARS
-    ? `${text.slice(0, TOOL_OUTPUT_MAX_CHARS)}… (output truncated)`
-    : text
-  const lines = capped.split('\n')
-  if (lines.length > TOOL_OUTPUT_MAX_LINES) {
-    return `${lines.slice(0, TOOL_OUTPUT_MAX_LINES).join('\n')}\n… (output truncated)`
+/** Bound a tool output so a verbose result cannot dominate the transcript.
+ *  The `truncated` flag travels with the row so the view never has to sniff
+ *  the marker string out of the content. */
+function truncateOutput(text: string): { text: string; truncated: boolean } {
+  if (text.length > TOOL_OUTPUT_MAX_CHARS) {
+    return {
+      text: `${text.slice(0, TOOL_OUTPUT_MAX_CHARS)}… (output truncated)`,
+      truncated: true,
+    }
   }
-  return capped
+  const lines = text.split('\n')
+  if (lines.length > TOOL_OUTPUT_MAX_LINES) {
+    return {
+      text: `${lines.slice(0, TOOL_OUTPUT_MAX_LINES).join('\n')}\n… (output truncated)`,
+      truncated: true,
+    }
+  }
+  return { text, truncated: false }
 }
 
 /** Split a message's segments into text rows and standalone tool-call rows,
@@ -210,9 +218,10 @@ export function applyEvent(state: TranscriptState, event: SessionEvent): Transcr
       .join('\n')
     const name = callId === undefined ? undefined : state.pendingTools[callId]
     if (callId === undefined || name === undefined || text === '') return base
+    const bounded = truncateOutput(text)
     return {
       ...base,
-      rows: [...state.rows, { kind: 'toolResult', name, output: truncateOutput(text) }],
+      rows: [...state.rows, { kind: 'toolResult', name, output: bounded.text, truncated: bounded.truncated }],
     }
   }
 
