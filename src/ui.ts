@@ -271,20 +271,21 @@ export class TerminalView implements AppView {
     this.tui.requestRender()
   }
 
+  /** Per-index row cache so live streaming updates rows in place. */
+  private rowCache: Array<{ row: TranscriptRow; component: Component }> = []
+
   private renderTranscript(attachment: AppState['attachment']): void {
-    this.transcript.clear()
-    if (attachment.phase !== 'attached') {
-      this.partial.setText('')
-      this.transcript.addChild(this.partial)
-      return
-    }
-    for (const row of attachment.transcript) {
-      this.transcript.addChild(rowComponent(row))
-    }
-    if (attachment.partial !== undefined) {
+    const rows = attachment.phase === 'attached' ? attachment.transcript : []
+    reconcileRows(this.transcript, this.rowCache, rows)
+    // The live partial updates in place (single Markdown component) and stays
+    // the last child, after every finalized row.
+    if (attachment.phase === 'attached' && attachment.partial !== undefined) {
       this.partial.setText(terminalSafeText(assistantMarkdown(partialSegments(attachment.partial))))
-      this.transcript.addChild(this.partial)
+    } else {
+      this.partial.setText('')
     }
+    this.transcript.removeChild(this.partial)
+    this.transcript.addChild(this.partial)
   }
 
   openProjectPicker(rows: readonly ProjectRow[], onSelect: (row: ProjectRow) => void, onCancel: () => void): void {
@@ -345,6 +346,35 @@ export class TerminalView implements AppView {
     this.tui.stop()
   }
 
+}
+
+/** Reconcile the transcript's row cache with a row list: dropped rows have
+ *  their components removed (so a shorter transcript or a session switch
+ *  never leaves stale rows rendered), new rows get components, and changed
+ *  rows are rebuilt in place. Exported for unit testing without a TTY. */
+export function reconcileRows(
+  container: Container,
+  cache: Array<{ row: TranscriptRow; component: Component }>,
+  rows: readonly TranscriptRow[],
+): void {
+  while (cache.length > rows.length) {
+    const stale = cache.pop()
+    if (stale !== undefined) container.removeChild(stale.component)
+  }
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index] as TranscriptRow
+    const entry = cache[index]
+    if (entry === undefined) {
+      const component = rowComponent(row)
+      cache.push({ row, component })
+      container.addChild(component)
+    } else if (entry.row !== row) {
+      const component = rowComponent(row)
+      container.removeChild(entry.component)
+      container.addChild(component)
+      cache[index] = { row, component }
+    }
+  }
 }
 
 /** Status header: project / session / connection, with the notice appended. */

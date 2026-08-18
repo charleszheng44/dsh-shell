@@ -6,9 +6,10 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { Markdown, getCapabilities, setCapabilities } from '@earendil-works/pi-tui'
+import { Container, Markdown, getCapabilities, setCapabilities } from '@earendil-works/pi-tui'
 
-import { assistantMarkdown, headerText, neutralizeLinks, pickerLabel, sessionPickerItems, terminalSafeText } from '../src/ui.js'
+import { assistantMarkdown, headerText, neutralizeLinks, pickerLabel, reconcileRows, sessionPickerItems, terminalSafeText } from '../src/ui.js'
+import type { TranscriptRow } from '../src/transcript.js'
 
 const identity = (text: string): string => text
 const markdownTheme = {
@@ -263,4 +264,18 @@ test('sessionPickerItems sanitizes titles with a fallback label', () => {
   const items = sessionPickerItems([{ sessionId: 's1' as never, title: '\x1b[31m\x1b[0m' }])
   assert.equal(items[0]?.value, 's1')
   assert.equal(items[0]?.label, 'Session')
+})
+
+test('reconcileRows removes dropped components when the transcript shrinks', () => {
+  const container = new Container()
+  const cache: Array<{ row: TranscriptRow; component: unknown }> = []
+  const rows = [
+    { kind: 'user', text: 'a' },
+    { kind: 'assistant', segments: [{ kind: 'text', text: 'b' }] },
+  ] as never
+  reconcileRows(container, cache as never, rows)
+  assert.equal(container.children.length, 2)
+  // Shrink: switching sessions must remove the old rows' components.
+  reconcileRows(container, cache as never, [])
+  assert.equal(container.children.length, 0)
 })
