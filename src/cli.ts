@@ -40,6 +40,12 @@ export function parseHostArg(args: readonly string[]): HostParseResult {
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) }
   }
+  // parseArgs silently accepts repeated options with last-wins semantics;
+  // a single-option CLI should reject them so a typo cannot go unnoticed.
+  const count = args.filter((arg) => arg === '--host' || arg.startsWith('--host=')).length
+  if (count > 1) {
+    return { ok: false, error: '--host may be given at most once' }
+  }
   const raw = host ?? DEFAULT_HOST
   let url: URL
   try {
@@ -103,7 +109,7 @@ export function createLifecycle(deps: LifecycleDeps): (code: number) => void {
 export async function main(argv: readonly string[]): Promise<number> {
   const parsed = parseHostArg(argv)
   if (!parsed.ok) {
-    console.error(`dsh-tui: ${parsed.error}`)
+    console.error(terminalSafeText(`dsh-tui: ${parsed.error}`))
     return 2
   }
   const { origin } = parsed

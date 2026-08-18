@@ -98,3 +98,9 @@ test('lifecycle exit carries the first requested code even when stop throws', ()
   assert.doesNotThrow(() => gate(1))
   assert.deepEqual(calls, ['dispose', 'abort', 'stop', 'exit:1'])
 })
+
+test('rejects duplicate --host options', () => {
+  const result = parseHostArg(['--host', 'http://127.0.0.1:3080', '--host', 'http://127.0.0.1:3081'])
+  assert.equal(result.ok, false)
+  if (!result.ok) assert.match(result.error, /at most once/)
+})
