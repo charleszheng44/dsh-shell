@@ -192,6 +192,10 @@ export function parseQuestionAnswers(questions: readonly QuestionItem[], input: 
     .map((part) => part.trim())
     .filter((part) => /^\d+$/.test(part))
     .map(Number))]
+  const rest = trimmed.split(',')
+    .map((part) => part.trim())
+    .filter((part) => part !== '' && !/^\d+$/.test(part))
+    .join(', ')
   return questions.map((question) => {
     const options = question.options ?? []
     if (numbers.length > 0 && options.length > 0) {
@@ -204,7 +208,12 @@ export function parseQuestionAnswers(questions: readonly QuestionItem[], input: 
       if (question.multiSelect !== true && selected.length > 1) selected = selected.slice(0, 1)
       // A number that matches no option must not silently produce an empty
       // answer: fall back to a custom answer with the typed text.
-      if (selected.length > 0) return { id: question.id, selected }
+      if (selected.length > 0) {
+        // Multi-select questions may carry selected options AND custom text
+        // together (the host schema allows it); single-select drops the rest.
+        if (question.multiSelect === true && rest !== '') return { id: question.id, selected, custom: rest }
+        return { id: question.id, selected }
+      }
     }
     const exact = options.find((option) => option.label.toLowerCase() === trimmed.toLowerCase())
     if (exact !== undefined) return { id: question.id, selected: [exact.label] }
@@ -827,9 +836,16 @@ export class App {
     }
     // The host settles the request with question/resolved; drop the pending
     // entry now so the card and the answer mode clear immediately, and keep
-    // the per-session cache in step so a later re-attach sees no ghost.
+    // the per-session cache in step so a later re-attach sees no ghost. The
+    // resolved frame can beat the receipt: then the entry is already gone,
+    // its notice-clearing already ran, and a new 'Answered' notice would
+    // stick — so only show it when the request is still pending.
+    const alreadySettled = !current.pendingQuestions.some((question) => question.rpcId === pending.rpcId)
     const remaining = current.pendingQuestions.filter((question) => question.rpcId !== pending.rpcId)
-    this.setState({ attachment: { ...current, sending: false, pendingQuestions: remaining }, notice: 'Answered' })
+    this.setState({
+      attachment: { ...current, sending: false, pendingQuestions: remaining },
+      ...(alreadySettled ? {} : { notice: 'Answered' }),
+    })
     const cached = this.inbox.get(String(sessionId))
     if (cached !== undefined) {
       const questions = cached.questions.filter((question) => question.rpcId !== pending.rpcId)

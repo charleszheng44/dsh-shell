@@ -39,6 +39,8 @@ import {
   pickerPanelStyle,
   questionBoxBg,
   toolBoxBg,
+  toolDisplayName,
+  toolDotStyle,
   toolErrorBoxBg,
   toolOutputStyle,
   toolResultBoxBg,
@@ -278,15 +280,19 @@ function rowComponent(row: TranscriptRow): Component {
     // Title and args compose into ONE Text: pi's HStack inserts a full reset
     // between stacked children, which would kill the box background for the
     // args, so the segments are joined here with attribute-specific resets.
+    // The category status dot and the reference's capitalized display name
+    // lead the row.
     const box = new Box(1, 1, toolBoxBg)
-    const title = toolTitleStyle(terminalSafeText(row.name))
+    const dot = toolDotStyle(row.name, false)('• ')
+    const title = toolTitleStyle(terminalSafeText(toolDisplayName(row.name)))
     const args = row.args === undefined ? '' : ` ${toolOutputStyle(terminalSafeText(row.args))}`
-    box.addChild(new Text(`${title}${args}`, 0, 0))
+    box.addChild(new Text(`${dot}${title}${args}`, 0, 0))
     return box
   }
   if (row.kind === 'toolResult') {
     const box = new Box(1, 1, row.error ? toolErrorBoxBg : toolResultBoxBg)
-    box.addChild(new Text(toolOutputStyle(terminalSafeText(toolPreviewText(row.output, row.truncated))), 0, 0))
+    const mark = row.error ? toolDotStyle(row.name, true)('✗ ') : ''
+    box.addChild(new Text(`${mark}${toolOutputStyle(terminalSafeText(toolPreviewText(row.output, row.truncated)))}`, 0, 0))
     return box
   }
   return new HStack([

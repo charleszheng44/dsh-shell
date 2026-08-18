@@ -191,6 +191,65 @@ export const toolOutputStyle = (text: string): string => mistSubtle(text)
 /** Working status ("Deep diving...", the reference's mist brand blue, bold). */
 export const workingStyle = (text: string): string => bold(mistBlue(text))
 
+/** Tool display names: the reference maps lowercase tool ids to capitalized
+ *  names (bash → Bash); unknown ids get their first letter uppercased. */
+const TOOL_DISPLAY_NAMES: Record<string, string> = {
+  bash: 'Bash',
+  powershell: 'PowerShell',
+  pwsh: 'PowerShell',
+  read: 'Read',
+  grep: 'Grep',
+  glob: 'Glob',
+  search: 'Search',
+  file_search: 'FileSearch',
+  write: 'Write',
+  edit: 'Edit',
+  run_code: 'RunCode',
+  todo_write: 'TodoWrite',
+  subagent: 'Task',
+  task: 'Task',
+  job: 'Job',
+  workflow: 'Workflow',
+  web_search: 'WebSearch',
+  web_fetch: 'WebFetch',
+  browser: 'Browser',
+}
+
+export function toolDisplayName(name: string): string {
+  const mapped = TOOL_DISPLAY_NAMES[name]
+  if (mapped !== undefined) return mapped
+  if (name.length === 0) return name
+  return name[0]?.toUpperCase() + name.slice(1)
+}
+
+/** Tool category colors for the status dot, from the reference's palette:
+ *  exec sage, read cyan, write violet, web mist blue, task rose. */
+type ToolCategory = 'exec' | 'read' | 'write' | 'web' | 'task' | 'default'
+
+const TOOL_CATEGORY: Record<string, ToolCategory> = {
+  bash: 'exec', powershell: 'exec', pwsh: 'exec', run_code: 'exec',
+  read: 'read', grep: 'read', glob: 'read', search: 'read', file_search: 'read',
+  write: 'write', edit: 'write', str_replace_editor: 'write', multiedit: 'write',
+  web_search: 'web', web_fetch: 'web', browser: 'web',
+  subagent: 'task', task: 'task', job: 'task', workflow: 'task',
+}
+
+const TOOL_DOT_COLOR: Record<ToolCategory, (text: string) => string> = {
+  exec: fgHex('#7fae99'),
+  read: fgHex('#82b8c7'),
+  write: fgHex('#b3a0d4'),
+  web: fgHex('#7da1de'),
+  task: fgHex('#d194ae'),
+  default: mistGreen,
+}
+
+/** The settled tool-status dot in the category color; failures render the
+ *  rose cross instead. */
+export function toolDotStyle(name: string, error: boolean): (text: string) => string {
+  if (error) return mistRose
+  return TOOL_DOT_COLOR[TOOL_CATEGORY[name] ?? 'default']
+}
+
 /** Assistant Markdown in the Gentle Mist Blue palette: warm tan headings,
  *  mist-blue code and bullets, shimmer-blue links, sage code blocks, subtle
  *  quotes — readable on the default terminal background. */

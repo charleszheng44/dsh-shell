@@ -7,7 +7,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { to256, toolBoxBg, toolOutputStyle, toolTitleStyle, userBubbleBg, userStyle } from '../src/theme.js'
+import { to256, toolBoxBg, toolDisplayName, toolDotStyle, toolOutputStyle, toolTitleStyle, userBubbleBg, userStyle } from '../src/theme.js'
 
 test('theme resets are attribute-specific so box backgrounds survive', () => {
   // pi's Box wraps each padded row in the background style; a full \x1b[0m
@@ -38,6 +38,22 @@ test('to256 cube path maps the palette hexes to their xterm cube indices', () =>
   assert.equal(to256([0x8a, 0xbe, 0xb7]), 109)
   assert.equal(to256([0xb5, 0xbd, 0x68]), 143)
   assert.equal(to256([0x81, 0xa2, 0xbe]), 109)
+})
+
+test('tool display names capitalize like the reference and dots stay clean', () => {
+  assert.equal(toolDisplayName('bash'), 'Bash')
+  assert.equal(toolDisplayName('run_code'), 'RunCode')
+  assert.equal(toolDisplayName('web_search'), 'WebSearch')
+  assert.equal(toolDisplayName('weird_tool'), 'Weird_tool')
+  assert.equal(toolDisplayName(''), '')
+  // The dot style resets only the foreground, whatever the color mode.
+  for (const name of ['bash', 'read', 'write', 'web_search', 'subagent', 'unknown']) {
+    const dot = toolDotStyle(name, false)('•')
+    assert.ok(dot.startsWith('\x1b[38;') && dot.endsWith('\x1b[39m'), `${name}: ${dot}`)
+    assert.ok(!dot.includes('\x1b[0m'), `${name} has no full reset`)
+  }
+  const err = toolDotStyle('bash', true)('✗')
+  assert.ok(err.startsWith('\x1b[38;') && err.endsWith('\x1b[39m'), err)
 })
 
 test('to256 gray ramp picks the nearest step and never exceeds 255', () => {

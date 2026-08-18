@@ -248,6 +248,13 @@ test('parseQuestionAnswers: numbers, labels, and custom text', async () => {
   // out of range.
   const years = [{ id: 'y', question: 'Year?', options: [{ label: '2024' }, { label: '2025' }] }]
   assert.deepEqual(parseQuestionAnswers(years, '2024'), [{ id: 'y', selected: ['2024'] }])
+  // Mixed input on a multi-select question keeps the custom text alongside
+  // the selected options (the host schema allows selected + custom).
+  const mixed = parseQuestionAnswers(multi, '1, other')
+  assert.deepEqual(mixed, [{ id: 'm', selected: ['a'], custom: 'other' }])
+  // Single-select questions drop the non-numeric remainder.
+  const singleMixed = parseQuestionAnswers(single, '1, other')
+  assert.deepEqual(singleMixed, [{ id: 's', selected: ['a'] }])
 })
 
 test('submission is disabled when disconnected', async () => {
