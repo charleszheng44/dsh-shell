@@ -369,8 +369,12 @@ export class TerminalView implements AppView {
           this.editor.setText(terminalSafeText(editorTextAfterSubmit(result, text)))
         }
         // A prompt that ran joins the up-arrow recall history (pi trims and
-        // dedupes consecutive repeats). Rejected submissions stay out.
-        if (result.ok) this.editor.addToHistory(text)
+        // dedupes consecutive repeats). The history copy is sanitized: pi
+        // restores recalled entries without the C0/C1 filters that typed and
+        // pasted input pass through, so a pasted control character must not
+        // survive in the buffer to be re-rendered raw on every recall. The
+        // wire copy above stays verbatim. Rejected submissions stay out.
+        if (result.ok) this.editor.addToHistory(terminalSafeText(text))
         // The App renders the notice; re-enable for the next attempt.
         this.editor.disableSubmit = !this.editorEnabled
       })

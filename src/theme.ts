@@ -10,10 +10,40 @@
 
 import { getCapabilities, type EditorTheme, type MarkdownTheme } from '@earendil-works/pi-tui'
 
-const RESET = '\x1b[0m'
-
+/** Attribute-specific reset for one SGR set-code: bold/italic/underline/color
+ *  reset only what they set, so a background applied around styled text
+ *  (bubbles, tool boxes, the picker panel) survives the inner resets — a full
+ *  \x1b[0m would kill the line's background for everything after the first
+ *  styled token. This mirrors pi's theme functions (fg ends in 39, bg in 49). */
 function sgr(codes: string): (text: string) => string {
-  return (text: string) => `\x1b[${codes}m${text}${RESET}`
+  const parts = codes.split(';')
+  const resets: string[] = []
+  for (let index = 0; index < parts.length; index += 1) {
+    const code = Number(parts[index])
+    if (code === 38 || code === 48) {
+      // Extended color (38;5;i or 38;2;r;g;b): the parameters are color
+      // values, not SGR codes — skip them and reset only the color.
+      const mode = Number(parts[index + 1])
+      resets.push(code === 38 ? '39' : '49')
+      index += mode === 2 ? 4 : mode === 5 ? 2 : 0
+    } else if (code === 1 || code === 2) {
+      resets.push('22')
+    } else if (code === 3) {
+      resets.push('23')
+    } else if (code === 4) {
+      resets.push('24')
+    } else if (code === 9) {
+      resets.push('29')
+    } else if (code >= 30 && code <= 37) {
+      resets.push('39')
+    } else if (code >= 40 && code <= 47) {
+      resets.push('49')
+    } else {
+      resets.push('0')
+    }
+  }
+  const reset = resets.join(';')
+  return (text: string) => `\x1b[${codes}m${text}\x1b[${reset}m`
 }
 
 /** Truecolor support, checked once (pi-tui reports the terminal capability). */
@@ -164,7 +194,9 @@ export const markdownTheme: MarkdownTheme = {
 export const editorTheme: EditorTheme = {
   borderColor: fgCyan,
   selectList: {
-    selectedPrefix: (text: string) => `\x1b[1;36m▸ ${text}${RESET}`,
+    // Reset only the emphasis, so the panel background (and any selected-row
+    // background) survives the prefix.
+    selectedPrefix: (text: string) => `\x1b[1;36m▸ ${text}\x1b[22;39m`,
     selectedText: boldCyan,
     description: dim,
     scrollInfo: dim,

@@ -7,7 +7,22 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { to256 } from '../src/theme.js'
+import { to256, toolBoxBg, toolOutputStyle, toolTitleStyle, userBubbleBg, userStyle } from '../src/theme.js'
+
+test('theme resets are attribute-specific so box backgrounds survive', () => {
+  // pi's Box wraps each padded row in the background style; a full \x1b[0m
+  // inside a styled token would kill the row's background for everything
+  // after it. Every style must reset only the attribute it sets.
+  assert.equal(userBubbleBg('x'), '\x1b[48;2;52;53;65mx\x1b[49m')
+  assert.equal(toolBoxBg('x'), '\x1b[48;2;40;40;50mx\x1b[49m')
+  assert.equal(toolOutputStyle('x'), '\x1b[38;2;128;128;128mx\x1b[39m')
+  assert.equal(userStyle('x'), '\x1b[32mx\x1b[39m')
+  assert.equal(toolTitleStyle('x'), '\x1b[1m\x1b[38;2;212;212;212mx\x1b[39m\x1b[22m')
+  // No full reset may appear anywhere in a styled token.
+  for (const style of [userBubbleBg, toolBoxBg, toolOutputStyle, userStyle, toolTitleStyle]) {
+    assert.ok(!style('x').includes('\x1b[0m'), 'style must not contain a full reset')
+  }
+})
 
 test('to256 cube path maps the palette hexes to their xterm cube indices', () => {
   // Cube picks verified against xterm's 6x6x6 cube: f0c674 -> 222,
