@@ -86,3 +86,15 @@ test('lifecycle exit carries the first requested code', () => {
   gate(0)
   assert.equal(code, 2)
 })
+
+test('lifecycle exit carries the first requested code even when stop throws', () => {
+  const calls: string[] = []
+  const gate = createLifecycle({
+    abort: () => { calls.push('abort') },
+    stop: () => { calls.push('stop'); throw new Error('broken fd') },
+    exit: (code) => { calls.push(`exit:${code}`) },
+    disposeSignals: () => { calls.push('dispose') },
+  })
+  assert.doesNotThrow(() => gate(1))
+  assert.deepEqual(calls, ['dispose', 'abort', 'stop', 'exit:1'])
+})

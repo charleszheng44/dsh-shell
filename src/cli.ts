@@ -84,10 +84,16 @@ export function createLifecycle(deps: LifecycleDeps): (code: number) => void {
     try {
       deps.disposeSignals()
       deps.abort()
+    } catch {
+      // Teardown failures must not prevent exit delivery.
+    }
+    try {
       deps.stop()
-    } finally {
+    } catch {
       // A throwing stop (e.g. write to a closed terminal fd) must not hang
-      // the process: the exit code is always delivered exactly once.
+      // the process or crash after the gate: the exit code is always
+      // delivered exactly once.
+    } finally {
       deps.exit(code)
     }
   }
