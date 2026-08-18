@@ -284,6 +284,33 @@ test('reconcileRows removes dropped components when the transcript shrinks', () 
   assert.equal(container.children.length, 0)
 })
 
+test('tool rows render boxed with a background that spans every line', () => {
+  // pi's stack compositing inserts full resets between children, so the
+  // toolCall title+args must compose inside one Text: every rendered line of
+  // the box must carry the background from its start through its padding
+  // with no full reset in between (regression: the with-args tool box lost
+  // its background after the title).
+  const container = new Container()
+  const cache: Array<{ row: TranscriptRow; component: unknown }> = []
+  const rows = [
+    { kind: 'toolCall', name: 'run_code', args: '{"code":"x"}' },
+    { kind: 'toolResult', name: 'run_code', output: 'out\nline two', truncated: false },
+  ] as never
+  reconcileRows(container, cache as never, rows)
+  for (const child of container.children) {
+    const lines = (child as { render(width: number): string[] }).render(40)
+    assert.ok(lines.length >= 2, 'boxed rows have padding lines')
+    for (const line of lines) {
+      assert.ok(line.startsWith('\x1b[48;'), `box line starts with a background: ${JSON.stringify(line)}`)
+      // The only full reset allowed is at the very end (pi's line terminator);
+      // everything before it must keep the background alive.
+      const body = line.replace(/\x1b\[0m$/, '')
+      assert.ok(!body.includes('\x1b[0m'), `no mid-line full reset: ${JSON.stringify(line)}`)
+      assert.ok(line.endsWith('\x1b[49m') || line.endsWith('\x1b[0m'), `line ends cleanly: ${JSON.stringify(line)}`)
+    }
+  }
+})
+
 test('control characters inside URLs cannot defeat link neutralization', () => {
   const original = getCapabilities()
   setCapabilities({ images: original.images, trueColor: original.trueColor, hyperlinks: true })

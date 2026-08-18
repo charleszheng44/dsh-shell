@@ -194,9 +194,11 @@ export const markdownTheme: MarkdownTheme = {
 export const editorTheme: EditorTheme = {
   borderColor: fgCyan,
   selectList: {
-    // Reset only the emphasis, so the panel background (and any selected-row
-    // background) survives the prefix.
-    selectedPrefix: (text: string) => `\x1b[1;36m▸ ${text}\x1b[22;39m`,
+    // pi 0.84.2 declares selectedPrefix but renders a hardcoded "→ " prefix;
+    // the key is required by the theme type, so provide the styled form for
+    // forwards compatibility. Attribute-specific resets keep the panel
+    // background alive on rows that carry it.
+    selectedPrefix: (text: string) => `\x1b[1;36m${text}\x1b[22;39m`,
     selectedText: boldCyan,
     description: dim,
     scrollInfo: dim,
