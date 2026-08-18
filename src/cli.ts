@@ -13,7 +13,7 @@ import { parseArgs } from 'node:util'
 
 import { App } from './app.js'
 import { NodeApiClient, createDshPort } from './dsh.js'
-import { TerminalView } from './ui.js'
+import { TerminalView, terminalSafeText } from './ui.js'
 
 /** Default loopback host, per the design doc. */
 export const DEFAULT_HOST = 'http://127.0.0.1:3080'
@@ -81,10 +81,15 @@ export function createLifecycle(deps: LifecycleDeps): (code: number) => void {
   return (code) => {
     if (done) return
     done = true
-    deps.disposeSignals()
-    deps.abort()
-    deps.stop()
-    deps.exit(code)
+    try {
+      deps.disposeSignals()
+      deps.abort()
+      deps.stop()
+    } finally {
+      // A throwing stop (e.g. write to a closed terminal fd) must not hang
+      // the process: the exit code is always delivered exactly once.
+      deps.exit(code)
+    }
   }
 }
 
@@ -118,7 +123,7 @@ export async function main(argv: readonly string[]): Promise<number> {
 
   const shutdown = createLifecycle({
     abort: () => controller.abort(),
-    stop: () => view.stop(),
+    stop: () => app.shutdown(),
     exit: (code) => { resolveExit(code) },
     disposeSignals,
   })
@@ -132,31 +137,41 @@ export async function main(argv: readonly string[]): Promise<number> {
   // Render failures must not leave the terminal dirty: route them through the
   // one shutdown path with a nonzero exit.
   const onUncaught = (error: Error): void => {
-    console.error(`dsh-tui: ${error.message ?? String(error)}`)
     shutdown(1)
+    console.error(terminalSafeText(`dsh-tui: ${error.message ?? String(error)}`))
   }
   process.on('uncaughtException', onUncaught)
+  const onUnhandledRejection = (reason: unknown): void => {
+    shutdown(1)
+    console.error(terminalSafeText(`dsh-tui: ${reason instanceof Error ? reason.message : String(reason)}`))
+  }
+  process.on('unhandledRejection', onUnhandledRejection)
 
   try {
     view.start()
     const boot = await app.boot()
     if (!boot.ok) {
-      console.error(`dsh-tui: ${origin}: ${boot.error.message}`)
       shutdown(1)
+      console.error(terminalSafeText(`dsh-tui: ${origin}: ${boot.error.message}`))
     }
   } catch (error) {
-    console.error(`dsh-tui: ${origin}: ${error instanceof Error ? error.message : String(error)}`)
     shutdown(1)
+    console.error(terminalSafeText(`dsh-tui: ${origin}: ${error instanceof Error ? error.message : String(error)}`))
   }
   const code = await exitPromise
   process.removeListener('uncaughtException', onUncaught)
+  process.removeListener('unhandledRejection', onUnhandledRejection)
   return code}
 
 // Direct execution: run the real entry.
 const isMain = process.argv[1] !== undefined
   && (process.argv[1].endsWith('cli.js') || process.argv[1].endsWith('cli.ts'))
 if (isMain) {
-  void main(process.argv.slice(2)).then((code) => {
-    process.exit(code)
-  })
+  void main(process.argv.slice(2)).then(
+    (code) => { process.exit(code) },
+    (error: unknown) => {
+      console.error(terminalSafeText(`dsh-tui: ${error instanceof Error ? error.message : String(error)}`))
+      process.exit(1)
+    },
+  )
 }

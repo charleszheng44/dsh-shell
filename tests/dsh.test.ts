@@ -7,7 +7,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import type { IApiClient } from '@deepseek-ai/dsh-host-apiproxy/client'
 import type { RpcResponse } from '@deepseek-ai/dsh-host-apiproxy/api'
 
 import { NodeApiClient, createDshPort, type DshPort, type PortClient } from '../src/dsh.js'
