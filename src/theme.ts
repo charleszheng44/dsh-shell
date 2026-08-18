@@ -90,10 +90,11 @@ function fgHex(hex: string): (text: string) => string {
   return sgr(TRUE_COLOR ? `38;2;${r};${g};${b}` : `38;5;${to256([r, g, b])}`)
 }
 
-/** Background style for a hex color. */
-function bgHex(hex: string): (text: string) => string {
+/** Background style for a hex color. The 256-color branch may take an explicit
+ *  fallback index for colors whose nearest index collides with a sibling's. */
+function bgHex(hex: string, fallback256?: number): (text: string) => string {
   const [r, g, b] = hexToRgb(hex)
-  return sgr(TRUE_COLOR ? `48;2;${r};${g};${b}` : `48;5;${to256([r, g, b])}`)
+  return sgr(TRUE_COLOR ? `48;2;${r};${g};${b}` : `48;5;${fallback256 ?? to256([r, g, b])}`)
 }
 
 const bold = sgr('1')
@@ -168,8 +169,11 @@ export const toolBoxBg = bgHex('#282832')
  *  shifts to the success tint, like the pi coding agent. */
 export const toolResultBoxBg = bgHex('#283228')
 
-/** Failed tool result background (pi's toolErrorBg #3c2828). */
-export const toolErrorBoxBg = bgHex('#3c2828')
+/** Failed tool result background (pi's toolErrorBg #3c2828). Its nearest
+ *  256-color index is 236 — the same as the success tint #283228 — so the
+ *  fallback uses the next gray step (237) to keep the error state visible on
+ *  terminals without truecolor. */
+export const toolErrorBoxBg = bgHex('#3c2828', 237)
 
 /** Tool title: pi renders the tool name bold in the default text color. */
 export const toolTitleStyle = (text: string): string => bold(piText(text))

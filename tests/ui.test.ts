@@ -290,6 +290,33 @@ test('headerText shows project, session, connection, and the notice', () => {
     notice: undefined,
   } as never
   assert.ok(headerText(hostile).includes('session-abc'))
+  // A title with an embedded newline cannot wrap the header row.
+  const wrapped = {
+    connection: 'connected',
+    projects: [],
+    sessions: [],
+    selectedProject: 'all',
+    attachment: {
+      phase: 'attached',
+      sessionId: 'session-abc',
+      title: 'multi\nline\ttitle',
+      sending: false,
+      turnActive: undefined,
+    },
+    notice: undefined,
+  } as never
+  assert.ok(!headerText(wrapped).includes('\n'))
+  assert.ok(headerText(wrapped).includes('multi line title'))
+  // The loading phase shows the title too.
+  const loading = {
+    connection: 'connected',
+    projects: [],
+    sessions: [],
+    selectedProject: 'all',
+    attachment: { phase: 'loading', sessionId: 'session-abc', title: 'verification-ok request', generation: 1, buffered: [] },
+    notice: undefined,
+  } as never
+  assert.ok(headerText(loading).includes('All sessions / verification-ok request / connected'))
 })
 
 test('formatTokens matches pi footer formatting', () => {
@@ -362,6 +389,21 @@ test('statsText renders a pi-style usage line only while attached', () => {
   const wrote = statsText(withWrite)
   assert.ok(wrote.includes('R30 W40'), wrote)
   assert.ok(wrote.includes('200.0%/1.0k'), wrote)
+  // Writes only: no "R0" segment, exactly like pi's independent gates.
+  const writesOnly = {
+    phase: 'attached',
+    stats: {
+      uncachedInputTokens: 10,
+      outputTokens: 20,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 40,
+      pressureTokens: 500,
+      contextWindow: 1000,
+    },
+  } as never
+  const onlyWrite = statsText(writesOnly)
+  assert.ok(onlyWrite.includes('W40'), onlyWrite)
+  assert.ok(!onlyWrite.includes('R'), onlyWrite)
   // Zero window stats are treated as missing (no line at all).
   const zeroWindow = {
     phase: 'attached',

@@ -162,7 +162,9 @@ export function summaryStats(session: SessionSummary | undefined): SessionStats 
   }
   const usage = projected.tokenUsage
   const pressure = projected.contextPressure
-  const number = (value: unknown): number | undefined => (typeof value === 'number' && Number.isFinite(value) ? value : undefined)
+  const number = (value: unknown): number | undefined => (
+    typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined
+  )
   const uncachedInputTokens = number(usage?.uncachedInputTokens)
   const outputTokens = number(usage?.outputTokens)
   const cacheReadTokens = number(usage?.cacheReadTokens)
