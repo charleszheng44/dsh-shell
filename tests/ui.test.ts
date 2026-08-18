@@ -482,7 +482,9 @@ test('questionCardText renders the question and its numbered options', () => {
   assert.ok(stacked.includes('? A\n? B'), stacked)
   // Host text cannot inject row breaks or escapes.
   const hostile = questionCardText([{ id: 'qc', question: 'x\ny', options: [{ label: 'z\tw' }] }])
-  assert.ok(!hostile.includes('\n❓') && hostile.includes('x y'), hostile)
+  assert.ok(hostile.includes('? x y'), hostile)
+  assert.ok(hostile.includes('z w'), hostile)
+  assert.ok(!hostile.includes('x\ny') && !hostile.includes('z\tw'), hostile)
 })
 
 test('footerHints switches to answering mode while a question is open', () => {
@@ -540,6 +542,13 @@ test('tool rows render boxed with a background that spans every line', () => {
   assert.ok(userBody.includes('❯'), 'user bubble contains the pointer')
   assert.ok(!userBody.includes('\x1b[0m'), 'no full reset inside the user bubble')
   const boxed = container.children.slice(1, 4) as Array<{ render(width: number): string[] }>
+  // Tool rows carry the category dot, the capitalized display name, and the
+  // rose cross on failures.
+  const callLines = boxed[0]?.render(60).join('\n') ?? ''
+  assert.ok(callLines.includes('•') && callLines.includes('RunCode'), callLines)
+  assert.ok(callLines.includes('('), 'args are parenthesized')
+  const errLines = boxed[2]?.render(60).join('\n') ?? ''
+  assert.ok(errLines.includes('✗'), 'failed results lead with the rose cross')
   // The error result uses the error tint, whatever the terminal's color mode:
   // its background SGR must differ from the success box's.
   const successLines = boxed[0]?.render(30) ?? []
@@ -667,6 +676,20 @@ test('editorPolicy enables input only for a connected attached session', () => {
   const loading = editorPolicy({ connection: 'connected', attachment: { phase: 'loading', buffered: [] } } as never, false)
   assert.equal(loading.enabled, false)
   assert.equal(loading.clearText, true)
+})
+
+test('PickerFrame budgets a styled title by visible width', () => {
+  const styled = new PickerFrame('\x1b[1m\x1b[38;2;171;194;236mSelect session\x1b[39m\x1b[22m', (text: string) => text)
+  const lines = styled.render(40)
+  // width 40 -> inner 36; the styled title is 14 visible columns, so the
+  // top border must span the full inner width with dashes to the edge.
+  assert.equal(lines[0], '┌─ \x1b[1m\x1b[38;2;171;194;236mSelect session\x1b[39m\x1b[22m' + '─'.repeat(36 - 14) + '┐')
+  assert.equal(lines.at(-1), '└' + '─'.repeat(38) + '┘')
+  // At a width too narrow for the title, the truncation is unstyled text
+  // (no escape codes can leak into the border).
+  const narrow = styled.render(14)
+  assert.ok(!narrow[0]?.includes('\x1b['), narrow[0])
+  assert.ok(narrow[0]?.endsWith('┐'), narrow[0])
 })
 
 test('PickerFrame renders a titled border around its children', () => {

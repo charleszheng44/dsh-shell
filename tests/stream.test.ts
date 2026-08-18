@@ -580,6 +580,12 @@ test('a flood of question/requested frames is bounded per session', async () => 
   await flush()
   const attached = view.renders.at(-1)?.attachment
   assert.equal(attached?.phase === 'attached' && attached.pendingQuestions.length, 16)
+  if (attached?.phase === 'attached') {
+    // The host settles the OLDEST ask first, so the cap must keep the head
+    // of the queue, not the tail.
+    assert.equal(attached.pendingQuestions[0]?.rpcId, 'rpc-0')
+    assert.equal(attached.pendingQuestions[15]?.rpcId, 'rpc-15')
+  }
 })
 
 test('queue and question frames that arrive before attach seed the attachment', async () => {

@@ -275,6 +275,10 @@ test('parseQuestionAnswers: numbers, labels, and custom text', async () => {
   // out of range.
   const years = [{ id: 'y', question: 'Year?', options: [{ label: '2024' }, { label: '2025' }] }]
   assert.deepEqual(parseQuestionAnswers(years, '2024'), [{ id: 'y', selected: ['2024'] }])
+  // Out-of-range numbers join the custom remainder instead of vanishing.
+  assert.deepEqual(parseQuestionAnswers(multi, '1, 9, other'), [{ id: 'm', selected: ['a'], custom: 'other, 9' }])
+  // Trailing commas and zero are tolerated (zero is out of range).
+  assert.deepEqual(parseQuestionAnswers(single, '0,'), [{ id: 's', selected: [], custom: '0,' }])
   // Mixed input on a multi-select question keeps the custom text alongside
   // the selected options (the host schema allows selected + custom).
   const mixed = parseQuestionAnswers(multi, '1, other')

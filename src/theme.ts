@@ -1,9 +1,11 @@
 /**
  * Terminal color theme: ANSI SGR styling for every pi-tui component the TUI
- * renders, aligned with the pi coding agent's dark palette (gold headings,
- * teal accent/code, green code blocks, gray quotes, message bubbles and
- * tool boxes with their own backgrounds). Theme functions wrap text in color
- * codes (each includes the reset so styles never bleed between lines); the
+ * renders, aligned with the Gentle Mist Blue (雾蓝) dark palette of the
+ * dsh-TUI reference client (warm off-white text, mist blues for brand and
+ * interaction, warm tan headings, sage code blocks, mist rose/amber status
+ * colors, and bubble/card surfaces with their own backgrounds). Theme
+ * functions wrap text in attribute-specific color codes (each resets only
+ * what it sets, so styles never bleed and box backgrounds survive); the
  * picker panel uses a background color so the overlay reads as a separate
  * panel instead of mixing with the transcript.
  */
@@ -102,11 +104,6 @@ const dim = sgr('2')
 const italic = sgr('3')
 const underline = sgr('4')
 const strikethrough = sgr('9')
-const fgGreen = sgr('32')
-const fgCyan = sgr('36')
-const boldCyan = sgr('1;36')
-const dimRed = sgr('2;31')
-
 // The Gentle Mist Blue (雾蓝) dark palette, from the dsh-TUI reference
 // client: warm off-white text, mist blues for brand and interaction, soft
 // rose/amber/green for status. Kept for the 256-color fallbacks in bgHex.
@@ -156,20 +153,23 @@ export function contextStyle(percent: number, text: string): string {
   return dim(text)
 }
 
-/** Picker panel background: the reference's dim tool-card substrate. */
+/** Picker panel background: the 256-color index 236 (the nearest step for
+ *  the tool-card family), so the overlay separates from the transcript. */
 export const pickerPanelStyle = sgr('48;5;236')
 
 /** Picker title: bold in the reference's interaction blue (suggestion). */
 export const pickerTitleStyle = (text: string): string => bold(mistShimmer(text))
 
 /** User message bubble background (the reference's userMessageBackground
- *  #292D36). The 256-color fallback (235) stays one step apart from the tool
- *  card so the bubble reads as its own surface. */
-export const userBubbleBg = bgHex('#292d36', 235)
+ *  #292D36); its natural 256-color index (236) keeps the truecolor
+ *  brightness order, where the bubble is lighter than the tool card. */
+export const userBubbleBg = bgHex('#292d36')
 
 /** Tool block background (the reference's toolCardBackground #242B3A) for
- *  call boxes. */
-export const toolBoxBg = bgHex('#242b3a')
+ *  call boxes. Its natural 256-color index (236) collides with the bubble,
+ *  so the fallback uses the darker step (235) to preserve the brightness
+ *  order of the truecolor hexes. */
+export const toolBoxBg = bgHex('#242b3a', 235)
 
 /** Tool result background: the reference's dim green diff surface #2B352C —
  *  a finished result shifts to the success tint. The 256-color fallback

@@ -248,8 +248,10 @@ export class PickerFrame implements Component {
     // The title may carry ANSI styling (mist-blue picker titles), so the
     // border budget uses its visible width, never the raw code length —
     // slicing inside an escape sequence would leak styling into the border.
-    const titleWidth = visibleLength(this.title)
-    const title = titleWidth > inner - 2 ? truncateToWidth(this.title, inner - 2) : this.title
+    // Truncation falls back to the unstyled text: pi's truncateToWidth would
+    // append a full reset that kills the panel background on the border.
+    const plain = this.title.replace(/\x1b\[[0-9;]*m/g, '')
+    const title = plain.length > inner - 2 ? plain.slice(0, Math.max(0, inner - 2)) : this.title
     const used = visibleLength(title)
     const lines: string[] = []
     lines.push(this.style(`┌─ ${title}${'─'.repeat(Math.max(0, inner - used))}┐`))
@@ -266,12 +268,13 @@ export class PickerFrame implements Component {
  *  matching pi's fallback preview. */
 const TOOL_OUTPUT_PREVIEW_LINES = 10
 
-/** One transcript line component. User prompts render as a green dot plus a
- *  pi-style background bubble; assistant text as a cyan block plus plain
- *  Markdown; tool calls and results as pi-style boxed blocks (bold title,
- *  gray bounded output). The user and assistant markers live in their own
- *  column so they never interfere with Markdown parsing — a leading code
- *  fence must still be detected — while tool rows are full-width boxes.
+/** One transcript line component. User prompts render as the reference's
+ *  pointer-in-bubble (subtle chevron, warm off-white text on the mist
+ *  bubble); assistant text as a mist-blue block plus plain Markdown; tool
+ *  calls and results as boxed blocks (category dot, capitalized name,
+ *  parenthesized args, bounded output). The assistant marker lives in its
+ *  own column so it never interferes with Markdown parsing — a leading code
+ *  fence must still be detected — while user and tool rows are full-width.
  *  Tool names, arguments, and outputs are host- or model-controlled text, so
  *  they pass through terminalSafeText like every other DSH-derived string. */
 function rowComponent(row: TranscriptRow): Component {
@@ -543,7 +546,7 @@ export class TerminalView implements AppView {
     if (rows.length === 0) {
       // Design: an empty project remains selectable and shows a notice; it
       // never creates a session, and Enter on the notice just closes.
-      this.showPicker(items, 'Select session', () => undefined, onCancel)
+      this.showPicker(items, pickerTitleStyle('Select session'), () => undefined, onCancel)
       return
     }
     this.showPicker(items, pickerTitleStyle('Select session'), (item) => {
