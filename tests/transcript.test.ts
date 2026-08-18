@@ -270,3 +270,36 @@ test('a text-delta before its block-start still accumulates', () => {
   ])
   assert.deepEqual(partialSegments(state.partial as never), [{ kind: 'text', text: 'early delta' }])
 })
+
+test('block-start after lazy text-deltas keeps the accumulated text', () => {
+  const state = projectEvents([
+    chunk(1, 0, 0, { type: 'text-delta', index: 0, text: 'early ' }),
+    chunk(2, 0, 0, { type: 'text-delta', index: 0, text: 'delta' }),
+    chunk(3, 0, 0, { type: 'block-start', index: 0, blockType: 'text' }),
+    chunk(4, 0, 0, { type: 'text-delta', index: 0, text: ' late' }),
+  ])
+  assert.deepEqual(partialSegments(state.partial as never), [{ kind: 'text', text: 'early delta late' }])
+})
+
+test('an empty-content assistant/message finalizes the partial but renders no row', () => {
+  const state = projectEvents([
+    chunk(1, 0, 0, { type: 'block-start', index: 0, blockType: 'text' }),
+    chunk(2, 0, 0, { type: 'text-delta', index: 0, text: 'partial' }),
+    assistantMessage(3, 0, 0, []),
+  ])
+  assert.equal(state.partial, undefined)
+  assert.equal(state.rows.length, 0)
+})
+
+test('a whitespace-only user message renders no row', () => {
+  const state = projectEvents([userMessage(1, { text: '   ' })])
+  assert.equal(state.rows.length, 0)
+})
+
+test('an empty text block-end produces no segment', () => {
+  const state = projectEvents([
+    chunk(1, 0, 0, { type: 'block-start', index: 0, blockType: 'text' }),
+    chunk(2, 0, 0, { type: 'block-end', index: 0, block: { type: 'text', text: '' } }),
+  ])
+  assert.deepEqual(partialSegments(state.partial as never), [])
+})

@@ -60,7 +60,9 @@ export function partialSegments(partial: PartialAssistant): readonly AssistantSe
     if (block === undefined) continue
     if (block.final !== undefined) {
       segments.push(block.final)
-    } else if (block.type === 'text' || (block.type === undefined && block.text !== '')) {
+    } else if (block.type === 'text' && block.text !== '') {
+      segments.push({ kind: 'text', text: block.text })
+    } else if (block.type === undefined && block.text !== '') {
       // text-delta chunks only ever carry visible text; a delta that arrived
       // before its block-start is therefore text even without a type yet.
       segments.push({ kind: 'text', text: block.text })
@@ -80,8 +82,8 @@ export function applyEvent(state: TranscriptState, event: SessionEvent): Transcr
       .filter((block) => block.type === 'text')
       .map((block) => (block.type === 'text' ? block.text : ''))
       .join('\n')
-    // An image-only or empty user message renders nothing.
-    if (text === '') return base
+    // An image-only, empty, or whitespace-only user message renders nothing.
+    if (text.trim() === '') return base
     return { ...base, rows: [...state.rows, { kind: 'user', text }] }
   }
 
@@ -105,6 +107,9 @@ export function applyEvent(state: TranscriptState, event: SessionEvent): Transcr
     const partial = state.partial !== undefined && state.partial.turn === turn && state.partial.step === step
       ? undefined
       : state.partial
+    // An empty-content assistant message exists only to carry usage; it
+    // finalizes the partial but renders no row.
+    if (segments.length === 0) return { ...base, partial }
     return {
       ...base,
       partial,
@@ -149,7 +154,9 @@ function applyChunk(state: TranscriptState, turn: number, step: number, chunk: S
 
 function updateBlocks(blocks: Map<number, PartialBlock>, chunk: StreamChunk): ReadonlyMap<number, PartialBlock> {
   if (chunk.type === 'block-start') {
-    blocks.set(chunk.index, { type: chunk.blockType, text: '', final: undefined })
+    // Keep any text a lazy text-delta accumulated before this start.
+    const current = blocks.get(chunk.index)
+    blocks.set(chunk.index, { type: chunk.blockType, text: current?.text ?? '', final: undefined })
   } else if (chunk.type === 'text-delta') {
     // Lazily create the accumulator if a delta arrives before its block-start
     // (robust against reordered live chunks in PR 3).
@@ -172,7 +179,7 @@ function updateBlocks(blocks: Map<number, PartialBlock>, chunk: StreamChunk): Re
 function segmentFromBlock(type: string, block: unknown): AssistantSegment | undefined {
   if (type === 'text') {
     const text = (block as { text?: string }).text
-    return text === undefined ? undefined : { kind: 'text', text }
+    return text === undefined || text === '' ? undefined : { kind: 'text', text }
   }
   if (type === 'tool-call') {
     const name = (block as { name?: string }).name
