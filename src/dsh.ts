@@ -225,7 +225,7 @@ export class NodeApiClient extends AbstractApiClient {
         // malformed frames cannot spam stderr.
         dropped += 1
         if (dropped === 1 || dropped === 10 || dropped % 100 === 0) {
-          console.error(`[dsh-tui] dropping malformed WebSocket frame on ${path} (${dropped} dropped)`)
+          console.error(`[dsh-shell] dropping malformed WebSocket frame on ${path} (${dropped} dropped)`)
         }
       }
     }

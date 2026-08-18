@@ -1,11 +1,11 @@
 {
-  "name": "dsh-tui",
+  "name": "dsh-shell",
   "version": "0.0.0",
   "private": true,
   "description": "Thin terminal client for DeepSeek Harness",
   "type": "module",
   "bin": {
-    "dsh-tui": "./dist/cli.js"
+    "dsh-shell": "./dist/cli.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",

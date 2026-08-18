@@ -7,11 +7,11 @@ Date: 2026-08-17
 Repositories:
 
 - `deepseek-harness`: DSH Host, wire protocol, and published network client.
-- `dsh-tui`: terminal presentation and keyboard input only.
+- `dsh-shell`: terminal presentation and keyboard input only.
 
 ## Decision
 
-Build `dsh-tui` as a standalone Node.js process that connects to one already-running `dsh web` Host over its typed HTTP and WebSocket API. The TUI does not load Cordis, start an agent, open session storage, create another DSH Host, or define another session identity. Attaching means selecting a DSH `SessionId`; the Web UI can open the same ID and observe the same durable history and live events.
+Build `dsh-shell` as a standalone Node.js process that connects to one already-running `dsh web` Host over its typed HTTP and WebSocket API. The TUI does not load Cordis, start an agent, open session storage, create another DSH Host, or define another session identity. Attaching means selecting a DSH `SessionId`; the Web UI can open the same ID and observe the same durable history and live events.
 
 The work is three implementation PRs: one prerequisite PR in `deepseek-harness`, one read-only TUI PR, and one live input/output TUI PR. The final PR has two explicit validation checkpoints so streaming is proven before input is enabled. This design document is not counted as an implementation PR.
 
@@ -56,7 +56,7 @@ The design relies on these current DSH interfaces:
 - `deepseek-harness/packages/client/connection/src/client/web-api-client.ts` already implements HTTP upstream calls and WebSocket downlinks, including an `onOpen` callback, but its browser entry is not an ordinary configurable Node ESM client.
 - `deepseek-harness/packages/client/connection/README.md` documents the loopback trust posture and the absence of authentication.
 - `deepseek-harness/packages/core/session/src/surface.ts` defines append-origin message events as the durable source for a human transcript; replacement copies are model-only.
-- `dsh-tui/src/cli.ts` proves that Pi can start in the alternate screen and restore the terminal on `Ctrl+C`.
+- `dsh-shell/src/cli.ts` proves that Pi can start in the alternate screen and restore the terminal on `Ctrl+C`.
 
 ## Architecture and ownership
 
@@ -64,7 +64,7 @@ The design relies on these current DSH interfaces:
                          same DSH SessionId
                     +--------------------------+
                     |                          |
-keyboard -> dsh-tui -> DSH HTTP API -> inbox -> agent
+keyboard -> dsh-shell -> DSH HTTP API -> inbox -> agent
                ^          |
                |          +-> session log
                |                    |
@@ -75,7 +75,7 @@ keyboard -> dsh-tui -> DSH HTTP API -> inbox -> agent
 
 Only one DSH Host runs. The Web UI and TUI are concurrent clients of that Host. They must not run separate DSH processes against the same session database.
 
-`dsh-tui` is not a Cordis plugin. The API gateway remains a DSH plugin; the TUI is an external client executable. This keeps terminal concerns out of the harness and harness behavior out of the terminal repository.
+`dsh-shell` is not a Cordis plugin. The API gateway remains a DSH plugin; the TUI is an external client executable. This keeps terminal concerns out of the harness and harness behavior out of the terminal repository.
 
 The shared `SessionId` is the complete Web/TUI mapping for this release. A `Terminal attached` presence indicator would require separate transient state and is explicitly deferred.
 
@@ -92,7 +92,7 @@ The preferred home is an explicit `./network` export from `@deepseek-ai/dsh-clie
 The first release has one option:
 
 ```text
-dsh-tui [--host http://127.0.0.1:3080]
+dsh-shell [--host http://127.0.0.1:3080]
 ```
 
 Use `node:util.parseArgs`; do not add a command-line parsing dependency. Accept only `http:` origins whose hostname is exactly `127.0.0.1` or `localhost`. Reject credentials, non-root paths, query strings, fragments, and every other hostname or scheme. Normalize the accepted value to an origin before constructing the network client.
@@ -315,7 +315,7 @@ Expected changes:
 
 - Add `protocolVersion` to the client-safe `host.describe` response, its schema, implementation, and tests.
 - Export one numeric protocol-version constant used by the Host response and external client compatibility check.
-- Add an ordinary Node ESM `./network` entry to `@deepseek-ai/dsh-client-connection` that accepts an explicit `URL` origin and exports the typed API client and protocol types needed by `dsh-tui`.
+- Add an ordinary Node ESM `./network` entry to `@deepseek-ai/dsh-client-connection` that accepts an explicit `URL` origin and exports the typed API client and protocol types needed by `dsh-shell`.
 - Preserve same-origin behavior for the existing browser entry.
 - Ensure importing and using `./network` neither executes the browser ModuleLoader bundle nor requires the consumer to install Cordis, Host webserver, or invariant peers. Mark Host-only peers optional for this face if that is sufficient.
 - Reuse standard `fetch`, `WebSocket`, `AbortController`, current DSH schemas, and the existing `onOpen` callback.
@@ -354,11 +354,11 @@ From an empty temporary production project, install the packed client-connection
 
 Handoff/merge condition:
 
-Merge and publish the DSH package version before PR 2 updates `dsh-tui`. Record the released exact version in PR 2; do not use a Git dependency, source import, or `file:` link.
+Merge and publish the DSH package version before PR 2 updates `dsh-shell`. Record the released exact version in PR 2; do not use a Git dependency, source import, or `file:` link.
 
-### PR 2 — dsh-tui: safe read-only selection and attachment
+### PR 2 — dsh-shell: safe read-only selection and attachment
 
-Repository: `dsh-tui`
+Repository: `dsh-shell`
 
 Depends on: validation point A and the published DSH client version.
 
@@ -391,11 +391,11 @@ Against a running DSH Web Host, the user can open both selectors, choose a non-a
 
 Handoff/merge condition:
 
-The reviewer confirms that `dsh-tui` imports only the ordinary published network entry, contains no DSH source copy, requires no DSH Host runtime package directly, writes no local state, and passes `pnpm check` before PR 3 begins.
+The reviewer confirms that `dsh-shell` imports only the ordinary published network entry, contains no DSH source copy, requires no DSH Host runtime package directly, writes no local state, and passes `pnpm check` before PR 3 begins.
 
-### PR 3 — dsh-tui: complete live input/output proxy
+### PR 3 — dsh-shell: complete live input/output proxy
 
-Repository: `dsh-tui`
+Repository: `dsh-shell`
 
 Depends on: validation point B.
 
@@ -458,7 +458,7 @@ pnpm run mock:llm -- --port 8000 --api-key mock-key --sequence slow_success --re
 # Terminal 2, from deepseek-harness
 DEEPSEEK_BASE_URL=http://127.0.0.1:8000/v1 DEEPSEEK_API_KEY=mock-key pnpm dsh --profile web
 
-# Terminal 3, from dsh-tui
+# Terminal 3, from dsh-shell
 pnpm dev -- --host http://127.0.0.1:3080
 ```
 
@@ -509,7 +509,7 @@ It owns rich projection and reconnect behavior, but external composition would p
 
 A `terminal.attach` or transcript endpoint would couple terminal presentation to the Host and duplicate information available from current Session and event APIs. The prerequisite is a versioned Node transport, not another behavior endpoint.
 
-### Run a DSH Host inside dsh-tui
+### Run a DSH Host inside dsh-shell
 
 This would increase startup and teardown ownership and could create separate authorities for Web and terminal clients. The user runs `dsh web`; the TUI connects to it.
 

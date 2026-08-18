@@ -1,4 +1,4 @@
-# dsh-tui
+# dsh-shell
 
 An independent terminal client for DeepSeek Harness.
 
@@ -13,7 +13,7 @@ session.
 ## Architecture
 
 One DSH host owns workspaces, sessions, agents, tools, persistence, queues,
-approvals, questions, and streaming events. `dsh-tui` connects as a client
+approvals, questions, and streaming events. `dsh-shell` connects as a client
 and renders those structured events with `@earendil-works/pi-tui`.
 
 The terminal and Web UI attach to the same DSH session ID. They must connect
@@ -23,7 +23,7 @@ writing the same session database.
 ```text
                  +-- Web UI
 DSH host --------+
-                 +-- dsh-tui
+                 +-- dsh-shell
 ```
 
 This repository owns:

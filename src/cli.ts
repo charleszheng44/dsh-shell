@@ -124,7 +124,7 @@ export function createLifecycle(deps: LifecycleDeps): (code: number) => void {
 export async function main(argv: readonly string[]): Promise<number> {
   const parsed = parseHostArg(argv)
   if (!parsed.ok) {
-    console.error(terminalSafeText(`dsh-tui: ${parsed.error}`))
+    console.error(terminalSafeText(`dsh-shell: ${parsed.error}`))
     return 2
   }
   const { origin } = parsed
@@ -167,7 +167,7 @@ export async function main(argv: readonly string[]): Promise<number> {
         // The gate aborts before exit(), so the controller state cannot
         // tell abort-driven from genuine pump rejections; the error can.
         pumpSettleError(error, (message) => {
-          console.error(terminalSafeText(`dsh-tui: ${message}`))
+          console.error(terminalSafeText(`dsh-shell: ${message}`))
           resolveExit(1)
         })
       }).finally(() => { resolveExit(code) })
@@ -192,12 +192,12 @@ export async function main(argv: readonly string[]): Promise<number> {
     const boot = await app.boot()
     if (!boot.ok && !controller.signal.aborted) {
       shutdown(1)
-      console.error(terminalSafeText(`dsh-tui: ${origin}: ${boot.error.message}`))
+      console.error(terminalSafeText(`dsh-shell: ${origin}: ${boot.error.message}`))
     }
   } catch (error) {
     if (!controller.signal.aborted) {
       shutdown(1)
-      console.error(terminalSafeText(`dsh-tui: ${origin}: ${error instanceof Error ? error.message : String(error)}`))
+      console.error(terminalSafeText(`dsh-shell: ${origin}: ${error instanceof Error ? error.message : String(error)}`))
     }
   }
   const code = await exitPromise
@@ -209,12 +209,12 @@ export async function main(argv: readonly string[]): Promise<number> {
 export function installFailureHandlers(shutdown: (code: number) => void): () => void {
   const onUncaught = (error: Error): void => {
     shutdown(1)
-    console.error(terminalSafeText(`dsh-tui: ${error.message ?? String(error)}`))
+    console.error(terminalSafeText(`dsh-shell: ${error.message ?? String(error)}`))
   }
   process.on('uncaughtException', onUncaught)
   const onUnhandledRejection = (reason: unknown): void => {
     shutdown(1)
-    console.error(terminalSafeText(`dsh-tui: ${reason instanceof Error ? reason.message : String(reason)}`))
+    console.error(terminalSafeText(`dsh-shell: ${reason instanceof Error ? reason.message : String(reason)}`))
   }
   process.on('unhandledRejection', onUnhandledRejection)
   return () => {
@@ -232,7 +232,7 @@ if (isMain) {
   void main(process.argv.slice(2)).then(
     (code) => { process.exit(code) },
     (error: unknown) => {
-      console.error(terminalSafeText(`dsh-tui: ${error instanceof Error ? error.message : String(error)}`))
+      console.error(terminalSafeText(`dsh-shell: ${error instanceof Error ? error.message : String(error)}`))
       process.exit(1)
     },
   )

@@ -73,8 +73,8 @@ test('keeps fenced Markdown intact', () => {
   assert.equal(terminalSafeText(input), input)
 })
 
-test('fixed-width fenced Markdown renders through the dsh-tui assembly path without control chars', () => {
-  // Exercise the real dsh-tui pipeline: assistantMarkdown assembles the row,
+test('fixed-width fenced Markdown renders through the dsh-shell assembly path without control chars', () => {
+  // Exercise the real dsh-shell pipeline: assistantMarkdown assembles the row,
   // terminalSafeText sanitizes it, then Pi renders at a fixed width.
   const row = { kind: 'assistant', segments: [{ kind: 'text', text: '```ts\nconst answer = 42\n```' }] } as const
   const markdown = new Markdown(terminalSafeText(assistantMarkdown(row.segments)), 1, 0, markdownTheme as never)

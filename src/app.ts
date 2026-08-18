@@ -354,8 +354,8 @@ export class App {
         this.setState({
           connection: 'disconnected',
           notice: this.streamAborted
-            ? this.state.notice ?? 'Disconnected: restart dsh-tui to reconnect'
-            : 'Disconnected: restart dsh-tui to reconnect',
+            ? this.state.notice ?? 'Disconnected: restart dsh-shell to reconnect'
+            : 'Disconnected: restart dsh-shell to reconnect',
         })
         return
       }
@@ -367,8 +367,8 @@ export class App {
       this.setState({
         connection: 'disconnected',
         notice: this.streamAborted
-          ? this.state.notice ?? 'Disconnected: restart dsh-tui to reconnect'
-          : 'Disconnected: restart dsh-tui to reconnect',
+          ? this.state.notice ?? 'Disconnected: restart dsh-shell to reconnect'
+          : 'Disconnected: restart dsh-shell to reconnect',
       })
     }
   }
@@ -604,7 +604,7 @@ export class App {
     if (this.closed) return
     if (this.state.connection !== 'connected') {
       // A dead stream cannot attach; keep the picker open and explain.
-      this.setState({ notice: 'Disconnected: restart dsh-tui to reconnect' })
+      this.setState({ notice: 'Disconnected: restart dsh-shell to reconnect' })
       return
     }
     this.view.closePicker()

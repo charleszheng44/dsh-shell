@@ -1,6 +1,6 @@
 # Working agreements
 
-`dsh-tui` is a thin terminal client for DeepSeek Harness. Keep agent execution, session persistence, prompt ordering, approvals, questions, and workspace ownership in the DSH host.
+`dsh-shell` is a thin remote terminal shell client for DeepSeek Harness. Keep agent execution, session persistence, prompt ordering, approvals, questions, and workspace ownership in the DSH host.
 
 - Communicate with DSH through its versioned client API and structured event stream.
 - Treat DSH session IDs as the shared identity used by terminal and web clients.
