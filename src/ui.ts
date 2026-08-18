@@ -238,12 +238,12 @@ export class PickerFrame implements Component {
 function rowComponent(row: TranscriptRow): Component {
   if (row.kind === 'user') {
     return new HStack([
-      { component: new Text(userMarker(), 0, 0), basis: 'auto', grow: 0 },
+      { component: new Text(userMarker(), 0, 0), basis: 3, grow: 0 },
       { component: new Text(userStyle(terminalSafeText(row.text)), 1, 0), basis: 'auto', grow: 1 },
     ])
   }
   return new HStack([
-    { component: new Text(assistantMarker(), 0, 0), basis: 'auto', grow: 0 },
+    { component: new Text(assistantMarker(), 0, 0), basis: 3, grow: 0 },
     { component: new Markdown(terminalSafeText(assistantMarkdown(row.segments)), 1, 0, markdownTheme), basis: 'auto', grow: 1 },
   ])
 }
@@ -255,7 +255,7 @@ export class TerminalView implements AppView {
   private readonly transcript = new Container()
   private readonly partial = new Markdown('', 1, 0, markdownTheme)
   private readonly partialRow = new HStack([
-    { component: new Text(assistantMarker(), 0, 0), basis: 'auto', grow: 0 },
+    { component: new Text(assistantMarker(), 0, 0), basis: 3, grow: 0 },
     { component: this.partial, basis: 'auto', grow: 1 },
   ])
   private readonly header = new Text('', 1, 0)
