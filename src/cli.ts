@@ -150,16 +150,7 @@ export async function main(argv: readonly string[]): Promise<number> {
 
   // Render failures must not leave the terminal dirty: route them through the
   // one shutdown path with a nonzero exit.
-  const onUncaught = (error: Error): void => {
-    shutdown(1)
-    console.error(terminalSafeText(`dsh-tui: ${error.message ?? String(error)}`))
-  }
-  process.on('uncaughtException', onUncaught)
-  const onUnhandledRejection = (reason: unknown): void => {
-    shutdown(1)
-    console.error(terminalSafeText(`dsh-tui: ${reason instanceof Error ? reason.message : String(reason)}`))
-  }
-  process.on('unhandledRejection', onUnhandledRejection)
+  const disposeFailures = installFailureHandlers(shutdown)
 
   try {
     view.start()
@@ -175,9 +166,27 @@ export async function main(argv: readonly string[]): Promise<number> {
     }
   }
   const code = await exitPromise
-  process.removeListener('uncaughtException', onUncaught)
-  process.removeListener('unhandledRejection', onUnhandledRejection)
+  disposeFailures()
   return code}
+
+/** Route uncaughtException/unhandledRejection through the one shutdown gate
+ *  with a nonzero exit and a terminal-safe stderr line. Returns a disposer. */
+export function installFailureHandlers(shutdown: (code: number) => void): () => void {
+  const onUncaught = (error: Error): void => {
+    shutdown(1)
+    console.error(terminalSafeText(`dsh-tui: ${error.message ?? String(error)}`))
+  }
+  process.on('uncaughtException', onUncaught)
+  const onUnhandledRejection = (reason: unknown): void => {
+    shutdown(1)
+    console.error(terminalSafeText(`dsh-tui: ${reason instanceof Error ? reason.message : String(reason)}`))
+  }
+  process.on('unhandledRejection', onUnhandledRejection)
+  return () => {
+    process.removeListener('uncaughtException', onUncaught)
+    process.removeListener('unhandledRejection', onUnhandledRejection)
+  }
+}
 
 // Direct execution: run the real entry. A rejection from main (only possible
 // before the gate exists, since every later path resolves through it) exits

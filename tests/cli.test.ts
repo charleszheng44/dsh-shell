@@ -104,3 +104,26 @@ test('rejects duplicate --host options', () => {
   assert.equal(result.ok, false)
   if (!result.ok) assert.match(result.error, /at most once/)
 })
+
+
+
+test('uncaughtException and unhandledRejection route through the shutdown gate', async (t) => {
+  const { installFailureHandlers } = await import('../src/cli.js')
+  const calls: string[] = []
+  const gate = (code: number): void => { calls.push(`gate:${code}`) }
+  const handlers: Array<(arg: unknown) => void> = []
+  const originalOn = process.on.bind(process)
+  const originalRemove = process.removeListener.bind(process)
+  t.mock.method(process, 'on', (event: string, handler: (arg: unknown) => void) => {
+    if (event === 'uncaughtException' || event === 'unhandledRejection') handlers.push(handler)
+    return originalOn(event, handler as never)
+  })
+  t.mock.method(process, 'removeListener', (event: string, handler: (arg: unknown) => void) => {
+    return originalRemove(event, handler as never)
+  })
+  const dispose = installFailureHandlers(gate)
+  // Fire the captured handlers the way Node would.
+  for (const handler of handlers) handler(new Error('render blew up'))
+  dispose()
+  assert.deepEqual(calls, ['gate:1', 'gate:1'])
+})
