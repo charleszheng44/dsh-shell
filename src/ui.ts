@@ -445,9 +445,12 @@ export class TerminalView implements AppView {
     }
     this.working.setText(this.workingActive ? workingStyle(deepDivingText(this.workingDots)) : '')
     this.stats.setText(statsText(state.attachment))
-    this.queue.setText(queuedText(state.attachment))
-    this.hints.setText(footerHints(state.attachment))
-    this.renderTranscript(state.attachment)
+    // Queue, answering hints, and the question card only make sense on a live
+    // stream: after a disconnect the header explains the state.
+    const connected = state.connection === 'connected'
+    this.queue.setText(connected ? queuedText(state.attachment) : '')
+    this.hints.setText(connected ? footerHints(state.attachment) : footerStyle('Ctrl+P project  Ctrl+S session  Ctrl+C quit\nApprovals and questions: use Web UI'))
+    this.renderTranscript(state.attachment, connected)
     const policy = editorPolicy(state, this.overlay !== undefined)
     this.editorEnabled = policy.enabled
     this.editor.disableSubmit = policy.disableSubmit
@@ -465,7 +468,7 @@ export class TerminalView implements AppView {
   /** Per-index row cache so live streaming updates rows in place. */
   private rowCache: Array<{ row: TranscriptRow; component: Component }> = []
 
-  private renderTranscript(attachment: AppState['attachment']): void {
+  private renderTranscript(attachment: AppState['attachment'], connected: boolean): void {
     const rows = attachment.phase === 'attached' ? attachment.transcript : []
     reconcileRows(this.transcript, this.rowCache, rows)
     // First-run hint while nothing is attached; removed as soon as any
@@ -488,9 +491,10 @@ export class TerminalView implements AppView {
     // An open host question renders as a boxed card above the status line;
     // the composer answers it until question/resolved settles it. Only the
     // first pending question is shown and answerable at a time; the host
-    // settles sequentially, so a second ask waits for the first.
+    // settles sequentially, so a second ask waits for the first. The card
+    // disappears on disconnect, like the queue line and answering hints.
     this.transcript.removeChild(this.questionBox)
-    if (attachment.phase === 'attached' && attachment.pendingQuestions.length > 0) {
+    if (connected && attachment.phase === 'attached' && attachment.pendingQuestions.length > 0) {
       const pending = attachment.pendingQuestions[0]
       if (pending !== undefined) {
         this.questionText.setText(questionCardText(pending.questions))

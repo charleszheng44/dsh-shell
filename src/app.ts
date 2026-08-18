@@ -413,6 +413,9 @@ export class App {
         ...entry,
         questions: entry.questions.filter((question) => question.rpcId !== frame.questionRpcId),
       }))
+      // The transient Answered notice has no echo of its own; the host's
+      // settle frame is it.
+      if (this.state.notice === 'Answered') this.setState({ notice: undefined })
       return
     }
     if (frame.type !== 'session/event') return

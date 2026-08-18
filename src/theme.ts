@@ -176,8 +176,11 @@ export const toolResultBoxBg = bgHex('#283228')
 export const toolErrorBoxBg = bgHex('#3c2828', 237)
 
 /** Question card background (pi's customMsgBg #2d2838): a host question
- *  renders as its own boxed card at the transcript tail. */
-export const questionBoxBg = bgHex('#2d2838')
+ *  renders as its own boxed card at the transcript tail. The nearest
+ *  256-color index is 236 — shared with the tool boxes and picker panel —
+ *  so the fallback uses the next gray step (238) to keep the card distinct
+ *  on terminals without truecolor. */
+export const questionBoxBg = bgHex('#2d2838', 238)
 
 /** Tool title: pi renders the tool name bold in the default text color. */
 export const toolTitleStyle = (text: string): string => bold(piText(text))
