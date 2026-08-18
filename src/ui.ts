@@ -29,37 +29,78 @@ import {
 import type { AppState, AppView, ProjectRow, SessionRow } from './app.js'
 import { partialSegments, type AssistantSegment, type TranscriptRow } from './transcript.js'
 
-/** Safe picker label: the sanitized title, or a sanitized fallback so Pi's
- *  label || value render never exposes the raw DSH id/key. */
+/** Safe picker label: the sanitized title (newlines collapsed so a DSH title
+ *  cannot inject a row break into the SelectList), or a sanitized fallback so
+ *  Pi's label || value render never exposes the raw DSH id/key. */
 export function pickerLabel(title: string, fallback: string): string {
-  return terminalSafeText(title) || fallback
+  const safe = terminalSafeText(title).replace(/\s+/g, ' ').trim()
+  return safe || fallback
 }
 
 /** Assemble one assistant row's segments into a single Markdown document.
  *  Tool markers and images render as plain lines; the caller sanitizes.
- *  Link destinations are stripped so Pi's Markdown never emits an OSC 8
+ *  Link destinations are neutralized so Pi's Markdown never emits an OSC 8
  *  hyperlink carrying a DSH-controlled URL. */
 export function assistantMarkdown(segments: readonly AssistantSegment[]): string {
-  return segments
+  const joined = segments
     .map((segment) => segment.kind === 'text'
-      ? neutralizeLinks(segment.text)
+      ? segment.text
       : segment.kind === 'tool'
         ? `Tool: ${segment.name}`
         : '[image]')
     .join('\n\n')
+  return neutralizeLinks(joined)
 }
 
-/** Replace `[text](url)` with `text (url)` so no href reaches the terminal.
- *  Inside fenced code blocks links are code and stay untouched. */
+/** Break autolinking of one URL/email token so Pi's Markdown (marked) cannot
+ *  recognize it as a link and emit an OSC 8 href: URLs get a zero-width space
+ *  inside their scheme, emails get one right after the @. The spaces are
+ *  invisible when rendered. */
+function breakAutolink(token: string): string {
+  if (token.length < 2) return token
+  if (token.startsWith('mailto:')) {
+    return `mail\u200Bto:${breakEmail(token.slice('mailto:'.length))}`
+  }
+  if (/^(https?:\/\/|www\.)/i.test(token)) {
+    return `${token[0]}\u200B${token.slice(1)}`
+  }
+  return breakEmail(token)
+}
+
+/** Insert a zero-width space right after the @ of a bare email so marked
+ *  cannot autolink it (the local part is no longer directly followed by a
+ *  recognizable domain). */
+function breakEmail(token: string): string {
+  const at = token.indexOf('@')
+  if (at === -1) return token
+  return `${token.slice(0, at + 1)}\u200B${token.slice(at + 1)}`
+}
+
+/** Neutralize every link form so no href reaches the terminal: [text](url),
+ *  ![alt](url), <url> autolinks, bare URLs, and bare emails. Inside fenced
+ *  code blocks links are code and stay untouched; fence state tracks the
+ *  opening marker exactly. */
 export function neutralizeLinks(markdown: string): string {
-  let inFence = false
-  return markdown.split('\n').map((line) => {
-    if (/^\s*(```|~~~)/.test(line)) {
-      inFence = !inFence
+  const lines = markdown.split('\n')
+  let fence: string | undefined
+  return lines.map((line) => {
+    const fenceMatch = line.match(/^\s*(```+|~~~+)/)
+    if (fenceMatch !== null) {
+      const marker = fenceMatch[1] ?? ''
+      if (fence === undefined) fence = marker
+      else if (marker === fence) fence = undefined
       return line
     }
-    if (inFence) return line
-    return line.replace(/\[([^\]]*)\]\(([^)\s]*)\)/g, '$1 ($2)')
+    if (fence !== undefined) return line
+    let out = line
+    out = out.replace(
+      /!?\[([^\]]*)\]\(<?([^)>\s]*)>?(?:\s+"[^"]*")?\)/g,
+      (_match, text: string, url: string) => `${text} (${breakAutolink(url)})`,
+    )
+    out = out.replace(/<([^<>\s]+)>/g, (_match, target: string) => breakAutolink(target))
+    out = out.replace(/(^|\s)((?:https?:\/\/|mailto:|www\.)[^\s<]+)/gi, (_match, pre: string, url: string) => `${pre}${breakAutolink(url)}`)
+    out = out.replace(/(^|[\s:(])([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})/g, (_match, pre: string, email: string) => `${pre}${breakAutolink(email)}`)
+    return out
   }).join('\n')
 }
 

@@ -6,7 +6,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { Markdown } from '@earendil-works/pi-tui'
+import { Markdown, getCapabilities, setCapabilities } from '@earendil-works/pi-tui'
 
 import { assistantMarkdown, neutralizeLinks, pickerLabel, terminalSafeText } from '../src/ui.js'
 
@@ -71,8 +71,11 @@ test('keeps fenced Markdown intact', () => {
   assert.equal(terminalSafeText(input), input)
 })
 
-test('fixed-width fenced Markdown renders through Pi without control chars', () => {
-  const markdown = new Markdown('```ts\nconst answer = 42\n```', 1, 0, markdownTheme as never)
+test('fixed-width fenced Markdown renders through the dsh-tui assembly path without control chars', () => {
+  // Exercise the real dsh-tui pipeline: assistantMarkdown assembles the row,
+  // terminalSafeText sanitizes it, then Pi renders at a fixed width.
+  const row = { kind: 'assistant', segments: [{ kind: 'text', text: '```ts\nconst answer = 42\n```' }] } as const
+  const markdown = new Markdown(terminalSafeText(assistantMarkdown(row.segments)), 1, 0, markdownTheme as never)
   const lines = markdown.render(40)
   assert.ok(lines.length > 0)
   for (const line of lines) {
@@ -94,17 +97,71 @@ test('pickerLabel never falls back to a raw DSH value when the title sanitizes t
   assert.equal(pickerLabel('', 'All sessions'), 'All sessions')
 })
 test('neutralizeLinks strips hrefs from markdown links but keeps code fences', () => {
-  assert.equal(
-    neutralizeLinks('see [docs](https://evil.example/x) now'),
-    'see docs (https://evil.example/x) now',
-  )
-  assert.equal(neutralizeLinks('```\n[code](https://x)\n```\nand [link](https://y)'),
-    '```\n[code](https://x)\n```\nand link (https://y)')
+  const out = neutralizeLinks('see [docs](https://evil.example/x) now')
+  const readable = out.replace(/\u200B/g, '')
+  assert.ok(!readable.includes('](https://evil.example/x)'))
+  assert.ok(readable.includes('docs (https://evil.example/x)'))
+  // The zero-width space is invisible when rendered but breaks autolinking.
+  assert.ok(out.includes('\u200B'), 'URL must be broken with a zero-width space')
+
+  const fenced = neutralizeLinks('```\n[code](https://x)\n```\nand [link](https://y)')
+  assert.ok(fenced.includes('[code](https://x)'), 'code fence links stay code')
+  assert.ok(!fenced.includes('and [link](https://y)'))
+
   assert.equal(neutralizeLinks('plain'), 'plain')
+})
+
+test('neutralizeLinks tracks fence parity exactly', () => {
+  // A ```-fence containing a literal ~~~ line must not close the fence.
+  const out = neutralizeLinks('```\n~~~ not a fence\n[code](https://x)\n```\n[link](https://y)')
+  assert.ok(out.includes('[code](https://x)'))
+  assert.ok(!out.includes('[link](https://y)'))
 })
 
 test('assistantMarkdown neutralizes links before Pi renders them', () => {
   const out = assistantMarkdown([{ kind: 'text', text: 'click [here](https://evil.example)' }])
   assert.ok(!out.includes('](https://evil.example)'))
-  assert.ok(out.includes('here (https://evil.example)'))
+  const readable = out.replace(/\u200B/g, '')
+  assert.ok(readable.includes('here (https://evil.example)'))
+})
+
+test('Pi renders no OSC 8 hyperlink for any DSH link form', () => {
+  const original = getCapabilities()
+  setCapabilities({ images: original.images, trueColor: original.trueColor, hyperlinks: true })
+  try {
+    const forms = [
+      '[text](https://evil.example/x)',
+      '![alt](https://evil.example/x.png)',
+      '<https://evil.example/x>',
+      'https://evil.example/x',
+      'www.evil.example/x',
+      'mailto:evil@example.com',
+      '[titled](https://evil.example/x "title")',
+      'multi [a](https://x) and [b](https://y)',
+    ]
+    for (const text of forms) {
+      const markdown = new Markdown(terminalSafeText(assistantMarkdown([{ kind: 'text', text }])), 1, 0, markdownTheme as never)
+      const rendered = markdown.render(80).join('\n')
+      assert.ok(!rendered.includes('\x1b]8;'), `OSC 8 emitted for ${JSON.stringify(text)}: ${JSON.stringify(rendered)}`)
+    }
+  } finally {
+    setCapabilities(original)
+  }
+})
+
+test('tool markers cannot smuggle links into OSC 8', () => {
+  const original = getCapabilities()
+  setCapabilities({ images: original.images, trueColor: original.trueColor, hyperlinks: true })
+  try {
+    const markdown = new Markdown(
+      terminalSafeText(assistantMarkdown([{ kind: 'tool', name: '[x](https://evil.example)' }])),
+      1,
+      0,
+      markdownTheme as never,
+    )
+    const rendered = markdown.render(80).join('\n')
+    assert.ok(!rendered.includes('\x1b]8;'), `OSC 8 emitted from tool marker: ${JSON.stringify(rendered)}`)
+  } finally {
+    setCapabilities(original)
+  }
 })
