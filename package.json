@@ -1,0 +1,29 @@
+{
+  "name": "dsh-tui",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Thin terminal client for DeepSeek Harness",
+  "type": "module",
+  "bin": {
+    "dsh-tui": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "check": "pnpm run typecheck",
+    "dev": "tsx src/cli.ts",
+    "start": "node dist/cli.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "packageManager": "pnpm@11.7.0",
+  "dependencies": {
+    "@earendil-works/pi-tui": "^0.84.2"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0"
+  }
+}
