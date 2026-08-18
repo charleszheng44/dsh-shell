@@ -8,7 +8,7 @@ import { test } from 'node:test'
 
 import { Markdown } from '@earendil-works/pi-tui'
 
-import { assistantMarkdown, pickerLabel, terminalSafeText } from '../src/ui.js'
+import { assistantMarkdown, neutralizeLinks, pickerLabel, terminalSafeText } from '../src/ui.js'
 
 const identity = (text: string): string => text
 const markdownTheme = {
@@ -92,4 +92,19 @@ test('pickerLabel never falls back to a raw DSH value when the title sanitizes t
   assert.equal(pickerLabel('ok title', 'Workspace'), 'ok title')
   assert.equal(pickerLabel('\x1b[31m\x1b[0m', 'Session'), 'Session')
   assert.equal(pickerLabel('', 'All sessions'), 'All sessions')
+})
+test('neutralizeLinks strips hrefs from markdown links but keeps code fences', () => {
+  assert.equal(
+    neutralizeLinks('see [docs](https://evil.example/x) now'),
+    'see docs (https://evil.example/x) now',
+  )
+  assert.equal(neutralizeLinks('```\n[code](https://x)\n```\nand [link](https://y)'),
+    '```\n[code](https://x)\n```\nand link (https://y)')
+  assert.equal(neutralizeLinks('plain'), 'plain')
+})
+
+test('assistantMarkdown neutralizes links before Pi renders them', () => {
+  const out = assistantMarkdown([{ kind: 'text', text: 'click [here](https://evil.example)' }])
+  assert.ok(!out.includes('](https://evil.example)'))
+  assert.ok(out.includes('here (https://evil.example)'))
 })

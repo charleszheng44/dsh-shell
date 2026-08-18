@@ -36,15 +36,31 @@ export function pickerLabel(title: string, fallback: string): string {
 }
 
 /** Assemble one assistant row's segments into a single Markdown document.
- *  Tool markers and images render as plain lines; the caller sanitizes. */
+ *  Tool markers and images render as plain lines; the caller sanitizes.
+ *  Link destinations are stripped so Pi's Markdown never emits an OSC 8
+ *  hyperlink carrying a DSH-controlled URL. */
 export function assistantMarkdown(segments: readonly AssistantSegment[]): string {
   return segments
     .map((segment) => segment.kind === 'text'
-      ? segment.text
+      ? neutralizeLinks(segment.text)
       : segment.kind === 'tool'
         ? `Tool: ${segment.name}`
         : '[image]')
     .join('\n\n')
+}
+
+/** Replace `[text](url)` with `text (url)` so no href reaches the terminal.
+ *  Inside fenced code blocks links are code and stay untouched. */
+export function neutralizeLinks(markdown: string): string {
+  let inFence = false
+  return markdown.split('\n').map((line) => {
+    if (/^\s*(```|~~~)/.test(line)) {
+      inFence = !inFence
+      return line
+    }
+    if (inFence) return line
+    return line.replace(/\[([^\]]*)\]\(([^)\s]*)\)/g, '$1 ($2)')
+  }).join('\n')
 }
 
 /**
