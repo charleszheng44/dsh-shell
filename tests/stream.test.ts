@@ -504,3 +504,32 @@ test('a flood during history load disconnects instead of attaching', async () =>
   assert.equal(last?.attachment.phase, 'none')
   assert.match(last?.notice ?? '', /flood/)
 })
+
+test('attach while disconnected keeps the picker open and says why', async () => {
+  const port = new FakePort()
+  const { app, view } = await booted(port)
+  await app.attach('s1' as never)
+  port.push({ type: 'stream/error', error: { code: 'internal', message: 'x', details: {} } } as never)
+  await flush()
+  await app.attach('s1' as never)
+  const last = view.renders.at(-1)
+  assert.equal(last?.attachment.phase, 'none')
+  assert.match(last?.notice ?? '', /Disconnected/)
+})
+
+test('a gap in the attached phase stops the pump', async () => {
+  const port = new FakePort()
+  port.historyEvents = { s1: [userText(1, 'q')] }
+  const { app, view } = await booted(port)
+  await app.attach('s1' as never)
+  port.push(sessionFrame('s1', userText(9, 'jump')))
+  await flush()
+  assert.equal(view.renders.at(-1)?.connection, 'disconnected')
+  // A later contiguous frame must not be applied (pump stopped).
+  port.push(sessionFrame('s1', userText(10, 'after gap')))
+  await flush()
+  const last = view.renders.at(-1)
+  if (last?.attachment.phase === 'attached') {
+    assert.equal(last.attachment.lastSeq, 1)
+  }
+})

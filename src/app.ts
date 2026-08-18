@@ -189,12 +189,17 @@ export class App {
   private startStream(): Promise<boolean> {
     return new Promise((resolve) => {
       let settled = false
+      let readyTimer: ReturnType<typeof setTimeout> | undefined
       const settle = (opened: boolean): void => {
         if (settled) return
         settled = true
+        if (readyTimer !== undefined) clearTimeout(readyTimer)
         resolve(opened)
       }
       this.streamPump = this.pumpStream(() => settle(true), () => settle(false))
+      // A host that accepts the TCP/WS upgrade then stalls must not hang
+      // boot; treat the deadline as a failed open.
+      readyTimer = setTimeout(() => settle(false), STREAM_READY_TIMEOUT_MS)
     })
   }
 
@@ -223,9 +228,13 @@ export class App {
       if (!this.signal.aborted && renderError === undefined) {
         // The stream itself failed: disconnected, per the failure table.
         onEnded()
+        // A stream failure is a disconnect regardless of the prior state
+        // (boot included); keep a stream/error-specific notice if present.
         this.setState({
           connection: 'disconnected',
-          notice: 'Disconnected: restart dsh-tui to reconnect',
+          notice: this.streamAborted
+            ? this.state.notice ?? 'Disconnected: restart dsh-tui to reconnect'
+            : 'Disconnected: restart dsh-tui to reconnect',
         })
         return
       }
@@ -233,9 +242,12 @@ export class App {
     }
     onEnded()
     if (!this.closed) {
+      // stream/error already set its specific notice; keep it.
       this.setState({
         connection: 'disconnected',
-        notice: 'Disconnected: restart dsh-tui to reconnect',
+        notice: this.streamAborted
+          ? this.state.notice ?? 'Disconnected: restart dsh-tui to reconnect'
+          : 'Disconnected: restart dsh-tui to reconnect',
       })
     }
   }
@@ -257,6 +269,7 @@ export class App {
       // cap is treated as a stream failure rather than unbounded growth.
       if (attachment.buffered.length >= MAX_BUFFERED_EVENTS) {
         this.setState({ connection: 'disconnected', notice: 'Disconnected: event flood' })
+        this.streamAborted = true
         return
       }
       this.setState({ attachment: { ...attachment, buffered: [...attachment.buffered, frame.event] } })
@@ -266,6 +279,7 @@ export class App {
     if (frame.event.seq <= attachment.lastSeq) return
     if (frame.event.seq !== attachment.lastSeq + 1) {
       this.setState({ connection: 'disconnected', notice: 'Disconnected: sequence gap' })
+      this.streamAborted = true
       return
     }
     const next = applyEvent(
@@ -365,6 +379,11 @@ export class App {
   /** Attach to a session: load one tail history page and project it. */
   async attach(sessionId: SessionId): Promise<void> {
     if (this.closed) return
+    if (this.state.connection !== 'connected') {
+      // A dead stream cannot attach; keep the picker open and explain.
+      this.setState({ notice: 'Disconnected: restart dsh-tui to reconnect' })
+      return
+    }
     this.view.closePicker()
     const generation = ++this.generation
     this.setState({
@@ -464,6 +483,9 @@ export class App {
     this.view.render(this.state)
   }
 }
+
+/** Upper bound on waiting for the mux stream's physical onOpen at boot. */
+export const STREAM_READY_TIMEOUT_MS = 10_000
 
 /** Upper bound on events buffered while history loads (a history round-trip
  *  needs only the frames between the request and its response). */
