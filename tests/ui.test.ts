@@ -551,8 +551,10 @@ test('tool rows render boxed with a background that spans every line', () => {
   assert.ok(errLines.includes('✗'), 'failed results lead with the rose cross')
   // The error result uses the error tint, whatever the terminal's color mode:
   // its background SGR must differ from the success box's.
-  const successLines = boxed[0]?.render(30) ?? []
-  const errorLines = boxed[1]?.render(30) ?? []
+  // boxed = [toolCall, success result, error result]; the tint assertion
+  // must compare the success and error RESULT boxes.
+  const successLines = boxed[1]?.render(30) ?? []
+  const errorLines = boxed[2]?.render(30) ?? []
   const firstSgr = (line: string | undefined): string => line === undefined ? '' : line.slice(0, line.indexOf('m') + 1)
   assert.notEqual(firstSgr(errorLines[1]), firstSgr(successLines[1]), 'error box uses a different background')
   assert.ok(firstSgr(errorLines[1]).startsWith('\x1b[48;'), 'error box has a background')

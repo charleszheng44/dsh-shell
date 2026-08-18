@@ -161,8 +161,8 @@ export const pickerPanelStyle = sgr('48;5;236')
 export const pickerTitleStyle = (text: string): string => bold(mistShimmer(text))
 
 /** User message bubble background (the reference's userMessageBackground
- *  #292D36); its natural 256-color index (236) keeps the truecolor
- *  brightness order, where the bubble is lighter than the tool card. */
+ *  #292D36); its natural 256-color index (236) keeps it one step lighter
+ *  than the tool card, mirroring the truecolor hexes. */
 export const userBubbleBg = bgHex('#292d36')
 
 /** Tool block background (the reference's toolCardBackground #242B3A) for

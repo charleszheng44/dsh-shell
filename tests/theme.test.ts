@@ -7,7 +7,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { to256, toolBoxBg, toolDisplayName, toolDotStyle, toolOutputStyle, toolTitleStyle, userBubbleBg, userStyle } from '../src/theme.js'
+import { to256, questionBoxBg, toolBoxBg, toolDisplayName, toolDotStyle, toolErrorBoxBg, toolOutputStyle, toolResultBoxBg, toolTitleStyle, userBubbleBg, userStyle } from '../src/theme.js'
 
 test('theme resets are attribute-specific so box backgrounds survive', () => {
   // pi's Box wraps each padded row in the background style; a full \x1b[0m
@@ -38,6 +38,22 @@ test('to256 cube path maps the palette hexes to their xterm cube indices', () =>
   assert.equal(to256([0x8a, 0xbe, 0xb7]), 109)
   assert.equal(to256([0xb5, 0xbd, 0x68]), 143)
   assert.equal(to256([0x81, 0xa2, 0xbe]), 109)
+})
+
+test('the 256-color fallbacks are distinct and brightness-ordered', () => {
+  // In 256-color mode each surface must emit its explicit index; in
+  // truecolor mode the byte form is 48;2;r;g;b and there is nothing to pin.
+  const fallback = (style: (text: string) => string, expected: number): void => {
+    const out = style('x')
+    const match = out.match(/48;5;(\d+)/)
+    if (match !== null) assert.equal(Number(match[1]), expected, out)
+    else assert.ok(out.startsWith('\x1b[48;2;'), out)
+  }
+  fallback(toolBoxBg, 235)
+  fallback(userBubbleBg, 236)
+  fallback(toolResultBoxBg, 237)
+  fallback(toolErrorBoxBg, 238)
+  fallback(questionBoxBg, 239)
 })
 
 test('tool display names capitalize like the reference and dots stay clean', () => {

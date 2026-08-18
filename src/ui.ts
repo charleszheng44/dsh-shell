@@ -15,7 +15,6 @@ import {
   HStack,
   Markdown,
   matchesKey,
-  truncateToWidth,
   ProcessTerminal,
   ScrollView,
   SelectList,

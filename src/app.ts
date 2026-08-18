@@ -205,7 +205,9 @@ export function parseQuestionAnswers(questions: readonly QuestionItem[], input: 
         .map((n) => options[n - 1]?.label ?? '')
         .filter((label) => label !== '')
       // Single-select questions take the first valid option only (the host
-      // rejects multi-selections for them).
+      // rejects multi-selections for them); the custom remainder covers the
+      // non-numeric text and out-of-range numbers, so the only drop is the
+      // surplus in-range numbers the question cannot accept.
       if (question.multiSelect !== true && selected.length > 1) selected = selected.slice(0, 1)
       // A number that matches no option must not silently produce an empty
       // answer: fall back to a custom answer with the typed text.
