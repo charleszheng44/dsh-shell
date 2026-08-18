@@ -311,3 +311,12 @@ test('a whitespace-only text block-end produces no segment', () => {
   ])
   assert.deepEqual(partialSegments(state.partial as never), [])
 })
+
+test('an unterminated code fence stays visible in the partial', () => {
+  const state = projectEvents([
+    userMessage(1, { text: 'show me' }),
+    chunk(2, 0, 0, { type: 'block-start', index: 0, blockType: 'text' }),
+    chunk(3, 0, 0, { type: 'text-delta', index: 0, text: '```ts\nconst x = 1\n' }),
+  ])
+  assert.deepEqual(partialSegments(state.partial as never), [{ kind: 'text', text: '```ts\nconst x = 1\n' }])
+})

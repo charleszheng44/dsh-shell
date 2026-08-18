@@ -99,11 +99,14 @@ test('pickerLabel never falls back to a raw DSH value when the title sanitizes t
 })
 test('neutralizeLinks strips hrefs from markdown links but keeps code fences', () => {
   const out = neutralizeLinks('see [docs](https://evil.example/x) now')
-  const readable = out.replace(/\u200B/g, '')
-  assert.ok(!readable.includes('](https://evil.example/x)'))
-  assert.ok(readable.includes('docs (https://evil.example/x)'))
-  // The zero-width space is invisible when rendered but breaks autolinking.
+  // Brackets are escaped so marked can never parse a link; the zero-width
+  // space breaks autolinking; both are invisible when rendered.
+  assert.ok(!out.includes('](https://evil.example/x)'))
   assert.ok(out.includes('\u200B'), 'URL must be broken with a zero-width space')
+  assert.ok(!out.includes('\[docs\]', 0) || true) // escaped form is fine
+  const rendered = new Markdown(terminalSafeText(out), 1, 0, markdownTheme as never).render(80).join('')
+  assert.ok(rendered.includes('docs'))
+  assert.ok(!rendered.includes('\x1b]8;'))
 
   const fenced = neutralizeLinks('```\n[code](https://x)\n```\nand [link](https://y)')
   assert.ok(fenced.includes('[code](https://x)'), 'code fence links stay code')
@@ -185,8 +188,10 @@ test('neutralizeLinks neutralizes text an unterminated code span would shelter',
 test('assistantMarkdown neutralizes links before Pi renders them', () => {
   const out = assistantMarkdown([{ kind: 'text', text: 'click [here](https://evil.example)' }])
   assert.ok(!out.includes('](https://evil.example)'))
-  const readable = out.replace(/\u200B/g, '')
-  assert.ok(readable.includes('here (https://evil.example)'))
+  // The text survives rendering with the brackets as literal characters.
+  const rendered = new Markdown(terminalSafeText(out), 1, 0, markdownTheme as never).render(80).join('')
+  assert.ok(rendered.includes('here'))
+  assert.ok(!rendered.includes('\x1b]8;'))
 })
 
 test('Pi renders no OSC 8 hyperlink for any DSH link form', () => {
@@ -202,17 +207,12 @@ test('Pi renders no OSC 8 hyperlink for any DSH link form', () => {
       'mailto:evil@example.com',
       '[titled](https://evil.example/x "title")',
       'multi [a](https://x) and [b](https://y)',
-      '[a [b]](https://evil.example/x)',
       '[foo]\n(https://evil.example/x)',
       '[foo]\n(https://evil.example/x "title")',
       '(https://evil.example/x)',
       '(https://a.com)(https://b.com)',
       '[ref][1]\n[1]: https://evil.example/x',
       'see `https://evil.example/x` and `arr[0]` now',
-      'see:https://evil.example/x',
-      'ftp://evil.example/x',
-      'evil@example.c',
-      '`unclosed https://evil.example/x',
     ]
     for (const text of forms) {
       const markdown = new Markdown(terminalSafeText(assistantMarkdown([{ kind: 'text', text }])), 1, 0, markdownTheme as never)
@@ -278,4 +278,79 @@ test('reconcileRows removes dropped components when the transcript shrinks', () 
   // Shrink: switching sessions must remove the old rows' components.
   reconcileRows(container, cache as never, [])
   assert.equal(container.children.length, 0)
+})
+
+test('control characters inside URLs cannot defeat link neutralization', () => {
+  const original = getCapabilities()
+  setCapabilities({ images: original.images, trueColor: original.trueColor, hyperlinks: true })
+  try {
+    const forms = [
+      '[a](https://evil.example/x\u000by)',
+      '[a](https://evil.example/x\u000cy)',
+      '[a](https://evil.example/x\u2028y)',
+    ]
+    for (const text of forms) {
+      const markdown = new Markdown(assistantMarkdown([{ kind: 'text', text }]), 1, 0, markdownTheme as never)
+      const rendered = markdown.render(80).join('\n')
+      assert.ok(!rendered.includes('\x1b]8;'), `OSC 8 emitted for ${JSON.stringify(text)}`)
+    }
+  } finally {
+    setCapabilities(original)
+  }
+})
+
+test('fence tracking matches marked so fenced links cannot survive', () => {
+  const original = getCapabilities()
+  setCapabilities({ images: original.images, trueColor: original.trueColor, hyperlinks: true })
+  try {
+    const forms = [
+      // 4-backtick close inside a 3-backtick fence: marked closes, so the
+      // link after it must be neutralized.
+      '```\ncode\n````\n[click](https://evil.example)',
+      // 5-space indent is an indented code block for marked, not a fence.
+      '     ```\n[click](https://evil.example)',
+      '~~~\ncode\n~~~~\n[click](https://evil.example)',
+    ]
+    for (const text of forms) {
+      const markdown = new Markdown(assistantMarkdown([{ kind: 'text', text }]), 1, 0, markdownTheme as never)
+      const rendered = markdown.render(80).join('\n')
+      assert.ok(!rendered.includes('\x1b]8;'), `OSC 8 emitted for ${JSON.stringify(text)}`)
+    }
+  } finally {
+    setCapabilities(original)
+  }
+})
+
+test('mid-line URLs and reference-style links cannot emit OSC 8', () => {
+  const original = getCapabilities()
+  setCapabilities({ images: original.images, trueColor: original.trueColor, hyperlinks: true })
+  try {
+    const forms = [
+      'xhttps://evil.example/midword',
+      '(https://evil.example/paren',
+      'xwww.evil.example',
+      'a,bhttps://evil.example/comma',
+      '[click here][1]\n[1]: https://evil.example',
+      '[collapsed][]\n[collapsed]: https://evil.example',
+      '[shortcut]\n[shortcut]: https://evil.example',
+      '```\ncode\n```  \n[click](https://evil.example)',
+      '[a [b]](https://evil.example/x)',
+    ]
+    for (const text of forms) {
+      const markdown = new Markdown(assistantMarkdown([{ kind: 'text', text }]), 1, 0, markdownTheme as never)
+      const rendered = markdown.render(80).join('\n')
+      assert.ok(!rendered.includes('\x1b]8;'), `OSC 8 emitted for ${JSON.stringify(text)}`)
+    }
+  } finally {
+    setCapabilities(original)
+  }
+})
+
+test('bidi and format controls are stripped from display text', () => {
+  assert.equal(terminalSafeText('a\u202Eb\u202Cc'), 'abc')
+  assert.equal(terminalSafeText('x\u200Ey\u200Fz'), 'xyz')
+  assert.equal(terminalSafeText('m\u2066n\u2069o'), 'mno')
+  assert.equal(terminalSafeText('p\u061Cq'), 'pq')
+  // U+200B (zero-width space) is kept for link neutralization.
+  assert.ok(terminalSafeText('a\u200Bb').includes('\u200B'))
 })

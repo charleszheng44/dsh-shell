@@ -38,11 +38,9 @@ export function pickerLabel(title: string, fallback: string): string {
 }
 
 /** Assemble one assistant row's segments into a single Markdown document.
- *  Tool markers and images render as plain lines. The text is sanitized
- *  before link neutralization (a control byte smuggled into a URL scheme
- *  must not survive to the renderer), and link destinations are neutralized
- *  so Pi's Markdown never emits an OSC 8 hyperlink carrying a DSH-controlled
- *  URL. */
+ *  Tool markers and images render as plain lines; the caller sanitizes.
+ *  Link destinations are neutralized so Pi's Markdown never emits an OSC 8
+ *  hyperlink carrying a DSH-controlled URL. */
 export function assistantMarkdown(segments: readonly AssistantSegment[]): string {
   const joined = segments
     .map((segment) => segment.kind === 'text'
@@ -51,6 +49,9 @@ export function assistantMarkdown(segments: readonly AssistantSegment[]): string
         ? `Tool: ${segment.name}`
         : '[image]')
     .join('\n\n')
+  // Strip control characters BEFORE link neutralization: a control byte
+  // inside a URL would break the neutralizer's regex and leave a live
+  // OSC 8 hyperlink (terminalSafeText at the call sites then cannot see it).
   return neutralizeLinks(terminalSafeText(joined))
 }
 
@@ -106,26 +107,38 @@ function neutralizeChunk(chunk: string): string {
  *  text again (marked never closes it, so it must be neutralized). */
 export function neutralizeLinks(markdown: string): string {
   const lines = markdown.split('\n')
-  let fence: string | undefined
+  // CommonMark fence state: open on <=3 spaces of indent, close on a line
+  // whose marker run is at least as long as the opener's. marked follows
+  // these rules; the neutralizer must not diverge or fenced links survive.
+  let fence: { marker: string; length: number } | undefined
   return lines.map((line) => {
     const fenceMatch = line.match(/^ {0,3}(```+|~~~+)/)
     if (fenceMatch !== null && fenceMatch[1] !== undefined) {
       const marker = fenceMatch[1]
+      const length = marker.length
+      const char = marker[0] ?? ''
       // CommonMark: a backtick fence's info string may not contain
       // backticks; marked rejects such openers and treats the line as
       // text, so must we, or the "fence" would shelter a live URL.
-      const char = marker[0] ?? ''
       const info = line.slice(fenceMatch[0].length)
       if (char !== '`' || !info.includes('`')) {
-        if (fence === undefined) fence = marker
-        else if (marker === fence) fence = undefined
+        if (fence === undefined) {
+          fence = { marker: char, length }
+          return line
+        }
+        // marked closes a fence on a marker run >= the opener's length even
+        // with trailing spaces/tabs (CommonMark allows trailing whitespace).
+        const closeMatch = line.match(new RegExp(`^ {0,3}${fence.marker === '`' ? '`+' : '~+'}[ \t]*$`))
+        if (fence.marker === char && length >= fence.length && closeMatch !== null) {
+          fence = undefined
+        }
         return line
       }
     }
     if (fence !== undefined) return line
     // Split the line into plain and inline-code spans (runs of backticks
     // toggle code state). Code content passes through untouched: marked
-    // renders code spans verbatim, and code content cannot become a link.
+    // renders code spans verbatim and code content cannot become a link.
     const parts = line.split(/(`+)/)
     let inCode = false
     let out = ''
@@ -162,7 +175,17 @@ export function neutralizeLinks(markdown: string): string {
 export function terminalSafeText(text: string): string {
   const normalized = text.replace(/\r\n?/g, '\n')
   const stripped = stripVTControlCharacters(normalized)
-  return stripped.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/g, '')
+  // C0/C1 controls except LF and tab, plus the line/paragraph separators:
+  // U+2028/U+2029 are invisible to many terminals and can smuggle content
+  // past link-neutralization regexes.
+  // C0/C1 controls except LF and tab, the line/paragraph separators, and
+  // bidi/format controls (RLO, LRM, isolates, Arabic letter mark) that can
+  // visually reorder or spoof transcript lines. U+200B (used by the link
+  // neutralizer) is deliberately kept.
+  return stripped.replace(
+    /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u2028\u2029\u200E-\u200F\u202A-\u202E\u2066-\u2069\u061C]/g,
+    '',
+  )
 }
 
 const identity = (text: string): string => text
@@ -351,7 +374,13 @@ export class TerminalView implements AppView {
 /** Reconcile the transcript's row cache with a row list: dropped rows have
  *  their components removed (so a shorter transcript or a session switch
  *  never leaves stale rows rendered), new rows get components, and changed
- *  rows are rebuilt in place. Exported for unit testing without a TTY. */
+ *  rows are rebuilt in place. Exported for unit testing without a TTY.
+ *
+ *  Invariant: within one attachment the row list only grows or replaces a
+ *  row at its own index; every session switch passes through an empty list
+ *  (loading/none), which clears the cache, so a changed row is always the
+ *  last one. A non-tail replacement would reorder children (removeChild +
+ *  addChild appends) and must not happen. */
 export function reconcileRows(
   container: Container,
   cache: Array<{ row: TranscriptRow; component: Component }>,

@@ -54,6 +54,10 @@ export interface DshPort {
   stream(signal: AbortSignal, onOpen: () => void): AsyncIterable<MuxFrame>
 }
 
+/** Upper bound on one WebSocket message: a hostile host must not be able to
+ *  OOM the client with a single giant frame. */
+const MAX_FRAME_BYTES = 4 * 1024 * 1024
+
 /** One unary call folded into the RpcResult error branch on any transport failure. */
 async function unary<T>(call: () => Promise<RpcResponse<T>>): Promise<RpcResult<T>> {
   try {
@@ -142,6 +146,7 @@ export class NodeApiClient extends AbstractApiClient {
     url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
     const socket = new WebSocket(url)
     const inbox: Array<{ kind: 'frame'; envelope: RpcRequest<F> } | { kind: 'end' }> = []
+    let dropped = 0
     let wake: (() => void) | undefined
     const enqueue = (item: { kind: 'frame'; envelope: RpcRequest<F> } | { kind: 'end' }): void => {
       inbox.push(item)
@@ -153,14 +158,19 @@ export class NodeApiClient extends AbstractApiClient {
       let frame: F
       try {
         if (typeof event.data !== 'string') throw new Error('binary WebSocket frame')
+        if (event.data.length > MAX_FRAME_BYTES) throw new Error('oversized WebSocket frame')
         const full = serverRequestSchema.parse(JSON.parse(event.data))
         frame = frameSchema.parse(full.payload)
         this.onEnvelope(full)
         enqueue({ kind: 'frame', envelope: { rpcId: full.rpcId, payload: frame } })
       } catch (error) {
         // DSH-derived bytes must not reach the raw-mode terminal, even in a
-        // diagnostic: log a static message only.
-        console.error(`[dsh-tui] dropping malformed WebSocket frame on ${path}`)
+        // diagnostic: log a static message only, and rate-limit so a flood of
+        // malformed frames cannot spam stderr.
+        dropped += 1
+        if (dropped === 1 || dropped === 10 || dropped % 100 === 0) {
+          console.error(`[dsh-tui] dropping malformed WebSocket frame on ${path} (${dropped} dropped)`)
+        }
       }
     }
     const handleClose = (): void => { enqueue({ kind: 'end' }) }
@@ -169,8 +179,10 @@ export class NodeApiClient extends AbstractApiClient {
         socket.close()
       }
     }
+    const handleError = (): void => { enqueue({ kind: 'end' }) }
     socket.addEventListener('open', handleOpen)
     socket.addEventListener('message', handleMessage)
+    socket.addEventListener('error', handleError)
     socket.addEventListener('close', handleClose, { once: true })
     signal.addEventListener('abort', handleAbort, { once: true })
     if (signal.aborted) handleAbort()
@@ -187,6 +199,7 @@ export class NodeApiClient extends AbstractApiClient {
       signal.removeEventListener('abort', handleAbort)
       socket.removeEventListener('open', handleOpen)
       socket.removeEventListener('message', handleMessage)
+      socket.removeEventListener('error', handleError)
       socket.removeEventListener('close', handleClose)
       handleAbort()
     }
