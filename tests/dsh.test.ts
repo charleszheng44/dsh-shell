@@ -16,6 +16,7 @@ function stubClient(overrides: {
   host?: Partial<PortClient['host']>
   workspace?: Partial<PortClient['workspace']>
   sessions?: Partial<PortClient['sessions']>
+  respond?: PortClient['respond']
   events?: Partial<PortClient['events']>
 } = {}): PortClient {
   const base: PortClient = {
@@ -41,6 +42,7 @@ function stubClient(overrides: {
     sessions: { ...base.sessions, ...overrides.sessions },
     respond: base.respond,
     events: { ...base.events, ...overrides.events },
+    ...(overrides.respond === undefined ? {} : { respond: overrides.respond }),
   }
 }
 
@@ -287,4 +289,29 @@ test('prompt is never retried on a connection error', async () => {
   const result = await port.prompt('s1' as never, 'hello', undefined)
   assert.equal(result.ok, false)
   assert.equal(calls, 1)
+})
+
+test('createDshPort.respond echoes the message and folds transport throws', async () => {
+  let received: unknown
+  const client = stubClient({
+    respond: async (message) => {
+      received = message
+      return { accepted: true }
+    },
+  })
+  const port: DshPort = createDshPort(client)
+  const message = {
+    type: 'client-response',
+    rpcId: 'rpc-q-1',
+    result: { ok: true, value: { sessionId: 's1', answer: { answers: [{ id: 'qa', selected: ['Yes'] }] } } },
+  }
+  const receipt = await port.respond(message as never, undefined)
+  assert.deepEqual(receipt, { accepted: true })
+  assert.deepEqual(received, message)
+  // A transport failure folds to a bad-response receipt (never retried).
+  const failing = stubClient({
+    respond: async () => { throw new Error('fetch failed') },
+  })
+  const folded = await createDshPort(failing).respond(message as never, undefined)
+  assert.deepEqual(folded, { accepted: false, reason: 'bad-response' })
 })
