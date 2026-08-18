@@ -486,7 +486,9 @@ export class TerminalView implements AppView {
       this.partial.setText('')
     }
     // An open host question renders as a boxed card above the status line;
-    // the composer answers it until question/resolved settles it.
+    // the composer answers it until question/resolved settles it. Only the
+    // first pending question is shown and answerable at a time; the host
+    // settles sequentially, so a second ask waits for the first.
     this.transcript.removeChild(this.questionBox)
     if (attachment.phase === 'attached' && attachment.pendingQuestions.length > 0) {
       const pending = attachment.pendingQuestions[0]

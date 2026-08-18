@@ -236,6 +236,18 @@ test('parseQuestionAnswers: numbers, labels, and custom text', async () => {
     { id: 'q1', selected: [], custom: '9' },
     { id: 'q2', selected: [], custom: '9' },
   ])
+  // Duplicates are deduped, and a single-select question takes the first
+  // valid option only.
+  const single = [{ id: 's', question: 'Pick one', options: [{ label: 'a' }, { label: 'b' }] }]
+  assert.deepEqual(parseQuestionAnswers(single, '1,1'), [{ id: 's', selected: ['a'] }])
+  assert.deepEqual(parseQuestionAnswers(single, '1,2'), [{ id: 's', selected: ['a'] }])
+  // Multi-select questions keep every valid selection.
+  const multi = [{ id: 'm', question: 'Pick any', multiSelect: true, options: [{ label: 'a' }, { label: 'b' }] }]
+  assert.deepEqual(parseQuestionAnswers(multi, '1,2'), [{ id: 'm', selected: ['a', 'b'] }])
+  // A numeric option label matches the exact-label branch when the number is
+  // out of range.
+  const years = [{ id: 'y', question: 'Year?', options: [{ label: '2024' }, { label: '2025' }] }]
+  assert.deepEqual(parseQuestionAnswers(years, '2024'), [{ id: 'y', selected: ['2024'] }])
 })
 
 test('submission is disabled when disconnected', async () => {

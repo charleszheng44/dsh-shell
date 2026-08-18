@@ -188,17 +188,20 @@ export interface QuestionAnswerItem {
  *  anything else becomes a custom answer. */
 export function parseQuestionAnswers(questions: readonly QuestionItem[], input: string): QuestionAnswerItem[] {
   const trimmed = input.trim()
-  const numbers = trimmed.split(',')
+  const numbers = [...new Set(trimmed.split(',')
     .map((part) => part.trim())
     .filter((part) => /^\d+$/.test(part))
-    .map(Number)
+    .map(Number))]
   return questions.map((question) => {
     const options = question.options ?? []
     if (numbers.length > 0 && options.length > 0) {
-      const selected = numbers
+      let selected = numbers
         .filter((n) => n >= 1 && n <= options.length)
         .map((n) => options[n - 1]?.label ?? '')
         .filter((label) => label !== '')
+      // Single-select questions take the first valid option only (the host
+      // rejects multi-selections for them).
+      if (question.multiSelect !== true && selected.length > 1) selected = selected.slice(0, 1)
       // A number that matches no option must not silently produce an empty
       // answer: fall back to a custom answer with the typed text.
       if (selected.length > 0) return { id: question.id, selected }
@@ -820,9 +823,16 @@ export class App {
       return { ok: false, reason: 'rejected', error: 'answer not accepted' }
     }
     // The host settles the request with question/resolved; drop the pending
-    // entry now so the card and the answer mode clear immediately.
+    // entry now so the card and the answer mode clear immediately, and keep
+    // the per-session cache in step so a later re-attach sees no ghost.
     const remaining = current.pendingQuestions.filter((question) => question.rpcId !== pending.rpcId)
     this.setState({ attachment: { ...current, sending: false, pendingQuestions: remaining }, notice: 'Answered' })
+    const cached = this.inbox.get(String(sessionId))
+    if (cached !== undefined) {
+      const questions = cached.questions.filter((question) => question.rpcId !== pending.rpcId)
+      if (questions.length === 0 && cached.queue.length === 0) this.inbox.delete(String(sessionId))
+      else this.inbox.set(String(sessionId), { ...cached, questions })
+    }
     return { ok: true }
   }
 
