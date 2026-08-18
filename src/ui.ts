@@ -267,12 +267,12 @@ const TOOL_OUTPUT_PREVIEW_LINES = 10
  *  they pass through terminalSafeText like every other DSH-derived string. */
 function rowComponent(row: TranscriptRow): Component {
   if (row.kind === 'user') {
+    // The reference's user prompt: `❯ text` inside the bubble, pointer in
+    // subtle gray, text in warm off-white — no separate marker column.
     const bubble = new Box(1, 1, userBubbleBg)
-    bubble.addChild(new Text(userStyle(terminalSafeText(row.text)), 0, 0))
-    return new HStack([
-      { component: new Text(userMarker(), 0, 0), basis: 3, grow: 0 },
-      { component: bubble, basis: 'auto', grow: 1 },
-    ])
+    const pointer = userMarker()
+    bubble.addChild(new Text(`${pointer}${userStyle(terminalSafeText(row.text))}`, 0, 0))
+    return bubble
   }
   if (row.kind === 'toolCall') {
     // Title and args compose into ONE Text: pi's HStack inserts a full reset
