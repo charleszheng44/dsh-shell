@@ -284,6 +284,21 @@ test('list failure keeps the current rows and shows the safe error', async () =>
   assert.ok(view.projectPickerRows !== undefined)
 })
 
+test('sessions-list failure keeps the current rows and shows the safe error', async () => {
+  const port = new FakePort()
+  port.workspaces = [workspace({ workspaceId: 'w1' as never, title: 'p', sessionIds: ['s1' as never] })]
+  port.sessions = [summary({ sessionId: 's1' as never })]
+  const { app, view } = await booted(port)
+  port.listSessions = async () => {
+    return { ok: false, error: { code: 'internal', message: 'boom', details: {} } }
+  }
+  await app.openProjectPicker()
+  const last = view.renders.at(-1)
+  assert.equal(last?.notice, 'boom')
+  // The previously fetched projects remain selectable: retry is possible.
+  assert.deepEqual(view.projectPickerRows?.map((row) => row.title), ['All sessions', 'p'])
+})
+
 test('shutdown is idempotent', async () => {
   const port = new FakePort()
   const { app, view } = await booted(port)
