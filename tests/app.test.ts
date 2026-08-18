@@ -248,6 +248,22 @@ test('stale attach suppression: late history from an older generation is ignored
   }
 })
 
+test('list failure keeps the current rows and shows the safe error', async () => {
+  const port = new FakePort()
+  port.workspaces = [workspace({ workspaceId: 'w1' as never, title: 'p', sessionIds: ['s1' as never] })]
+  port.sessions = [summary({ sessionId: 's1' as never })]
+  const { app, view } = await booted(port)
+  const original = port.listWorkspaces.bind(port)
+  port.listWorkspaces = async () => {
+    return { ok: false, error: { code: 'internal', message: 'boom', details: {} } }
+  }
+  await app.openProjectPicker()
+  const last = view.renders.at(-1)
+  assert.equal(last?.notice, 'boom')
+  assert.ok(view.projectPickerRows !== undefined)
+  void original
+})
+
 test('shutdown is idempotent', async () => {
   const port = new FakePort()
   const { app, view } = await booted(port)
