@@ -169,7 +169,7 @@ export function summaryStats(session: SessionSummary | undefined): SessionStats 
   const cacheWriteTokens = number(usage?.cacheWriteTokens)
   const pressureTokens = number(pressure?.pressureTokens)
   const contextWindow = number(pressure?.contextWindow)
-  if (uncachedInputTokens === undefined || outputTokens === undefined || pressureTokens === undefined || contextWindow === undefined) {
+  if (uncachedInputTokens === undefined || outputTokens === undefined || pressureTokens === undefined || contextWindow === undefined || contextWindow <= 0) {
     return undefined
   }
   return {

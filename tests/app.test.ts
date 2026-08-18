@@ -12,7 +12,7 @@ import { test } from 'node:test'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { MuxFrame, SessionSummary, WorkspaceView } from '@deepseek-ai/dsh-host-apiproxy/api'
 
-import { App, sessionRows, type AppState, type AppView, type ProjectRow } from '../src/app.js'
+import { App, sessionRows, summaryStats, type AppState, type AppView, type ProjectRow } from '../src/app.js'
 import type { DshPort } from '../src/dsh.js'
 import type { HostDescription } from '../src/dsh.js'
 
@@ -270,6 +270,108 @@ test('empty project opens the session picker with no rows and never creates a se
   await app.selectProject({ key: 'w1' as never, title: 'empty' })
   assert.deepEqual(view.sessionPickerRows ?? [], [])
   assert.equal(port.historyCalls.length, 0)
+})
+
+test('summaryStats reads token and context numbers structurally', () => {
+  const withStats = summary({
+    sessionId: 's1' as never,
+    projections: {
+      asOfSeq: 1,
+      values: {
+        title: 'T',
+        tokenUsage: { uncachedInputTokens: 100, outputTokens: 50, cacheReadTokens: 30, cacheWriteTokens: 20 },
+        contextPressure: { pressureTokens: 200, contextWindow: 1000 },
+      } as never,
+    },
+  })
+  assert.deepEqual(summaryStats(withStats), {
+    uncachedInputTokens: 100,
+    outputTokens: 50,
+    cacheReadTokens: 30,
+    cacheWriteTokens: 20,
+    pressureTokens: 200,
+    contextWindow: 1000,
+  })
+  // Missing projections, partial numbers, and non-finite numbers mean no stats.
+  assert.equal(summaryStats(summary({ sessionId: 's2' as never })), undefined)
+  assert.equal(summaryStats(undefined), undefined)
+  const partial = summary({
+    sessionId: 's3' as never,
+    projections: { asOfSeq: 1, values: { tokenUsage: { outputTokens: 1 } } as never },
+  })
+  assert.equal(summaryStats(partial), undefined)
+  const nan = summary({
+    sessionId: 's4' as never,
+    projections: {
+      asOfSeq: 1,
+      values: {
+        tokenUsage: { uncachedInputTokens: Number.NaN, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 },
+        contextPressure: { pressureTokens: 1, contextWindow: 1000 },
+      } as never,
+    },
+  })
+  assert.equal(summaryStats(nan), undefined)
+  // A non-positive context window is degenerate: no stats line.
+  const zero = summary({
+    sessionId: 's5' as never,
+    projections: {
+      asOfSeq: 1,
+      values: {
+        tokenUsage: { uncachedInputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 },
+        contextPressure: { pressureTokens: 0, contextWindow: 0 },
+      } as never,
+    },
+  })
+  assert.equal(summaryStats(zero), undefined)
+})
+
+test('attach carries the picker title and the footer stats snapshot', async () => {
+  const port = new FakePort()
+  port.workspaces = [workspace({ workspaceId: 'w1' as never, title: 'p', sessionIds: ['s1' as never] })]
+  port.sessions = [summary({
+    sessionId: 's1' as never,
+    projections: {
+      asOfSeq: 1,
+      values: {
+        title: 'Nice title',
+        tokenUsage: { uncachedInputTokens: 10, outputTokens: 20, cacheReadTokens: 0, cacheWriteTokens: 0 },
+        contextPressure: { pressureTokens: 30, contextWindow: 1000 },
+      } as never,
+    },
+  })]
+  port.historyEvents = { s1: [] }
+  const { app, view } = await booted(port)
+  await app.selectProject({ key: 'w1' as never, title: 'p' })
+  const attach = app.attach('s1' as never)
+  // The loading phase already carries the title.
+  const loading = view.renders.at(-1)
+  assert.equal(loading?.attachment.phase === 'loading' && loading.attachment.title, 'Nice title')
+  await attach
+  const last = view.renders.at(-1)
+  assert.equal(last?.attachment.phase, 'attached')
+  if (last?.attachment.phase === 'attached') {
+    assert.equal(last.attachment.title, 'Nice title')
+    assert.deepEqual(last.attachment.stats, {
+      uncachedInputTokens: 10,
+      outputTokens: 20,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      pressureTokens: 30,
+      contextWindow: 1000,
+    })
+  }
+  // A session with no projection falls back to the id and no stats.
+  port.historyEvents = { s2: [] }
+  port.sessions = [summary({ sessionId: 's2' as never })]
+  port.workspaces = [workspace({ workspaceId: 'w1' as never, title: 'p', sessionIds: ['s2' as never] })]
+  await app.selectProject({ key: 'w1' as never, title: 'p' })
+  await app.attach('s2' as never)
+  const bare = view.renders.at(-1)
+  assert.equal(bare?.attachment.phase, 'attached')
+  if (bare?.attachment.phase === 'attached') {
+    assert.equal(bare.attachment.title, 's2')
+    assert.equal(bare.attachment.stats, undefined)
+  }
 })
 
 test('disappeared session returns to the session selector with a notice', async () => {

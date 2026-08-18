@@ -10,6 +10,7 @@ import { Container, Markdown, getCapabilities, setCapabilities } from '@earendil
 
 import { PickerFrame, assistantMarkdown, deepDivingText, editorPolicy, editorTextAfterSubmit, formatTokens, headerText, isWorking, neutralizeLinks, pickerLabel, reconcileRows, sessionPickerItems, statsText, terminalSafeText, toolPreviewText } from '../src/ui.js'
 import type { TranscriptRow } from '../src/transcript.js'
+import { contextStyle } from '../src/theme.js'
 
 const identity = (text: string): string => text
 const markdownTheme = {
@@ -297,6 +298,18 @@ test('formatTokens matches pi footer formatting', () => {
   assert.equal(formatTokens(42000), '42k')
   assert.equal(formatTokens(1500000), '1.5M')
   assert.equal(formatTokens(42000000), '42M')
+  // Exact threshold crossings.
+  assert.equal(formatTokens(1000), '1.0k')
+  assert.equal(formatTokens(10000), '10k')
+  assert.equal(formatTokens(1000000), '1.0M')
+  assert.equal(formatTokens(10000000), '10M')
+})
+
+test('contextStyle colors past the pi warning and error thresholds', () => {
+  assert.ok(contextStyle(70, 'x').includes('\x1b[2m'), '70% stays dim')
+  assert.ok(contextStyle(70.001, 'x').includes('\x1b[33m'), 'just past 70% warns yellow')
+  assert.ok(contextStyle(90, 'x').includes('\x1b[33m'), '90% still yellow')
+  assert.ok(contextStyle(90.001, 'x').includes('\x1b[2;31m'), 'past 90% turns red')
 })
 
 test('statsText renders a pi-style usage line only while attached', () => {
@@ -334,6 +347,34 @@ test('statsText renders a pi-style usage line only while attached', () => {
   assert.ok(bare.includes('↑100 ↓50'), bare)
   assert.ok(!bare.includes('R'), bare)
   assert.ok(bare.includes('50.0%/1.0k'), bare)
+  // Cache writes show the W segment; over-100% context stays bounded text.
+  const withWrite = {
+    phase: 'attached',
+    stats: {
+      uncachedInputTokens: 10,
+      outputTokens: 20,
+      cacheReadTokens: 30,
+      cacheWriteTokens: 40,
+      pressureTokens: 2000,
+      contextWindow: 1000,
+    },
+  } as never
+  const wrote = statsText(withWrite)
+  assert.ok(wrote.includes('R30 W40'), wrote)
+  assert.ok(wrote.includes('200.0%/1.0k'), wrote)
+  // Zero window stats are treated as missing (no line at all).
+  const zeroWindow = {
+    phase: 'attached',
+    stats: {
+      uncachedInputTokens: 10,
+      outputTokens: 20,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      pressureTokens: 0,
+      contextWindow: 0,
+    },
+  } as never
+  assert.equal(statsText(zeroWindow), '')
 })
 
 test('sessionPickerItems renders a notice row for an empty project', () => {
@@ -377,9 +418,13 @@ test('tool rows render boxed with a background that spans every line', () => {
   reconcileRows(container, cache as never, rows)
   assert.equal(container.children.length, 3)
   const boxed = container.children.slice(1) as Array<{ render(width: number): string[] }>
-  // The error result uses the error tint; every box line keeps its background.
+  // The error result uses the error tint, whatever the terminal's color mode:
+  // its background SGR must differ from the success box's.
+  const successLines = boxed[0]?.render(30) ?? []
   const errorLines = boxed[1]?.render(30) ?? []
-  assert.ok(errorLines[1]?.startsWith('\x1b[48;2;60;40;40m'), 'error box uses the error tint')
+  const firstSgr = (line: string | undefined): string => line === undefined ? '' : line.slice(0, line.indexOf('m') + 1)
+  assert.notEqual(firstSgr(errorLines[1]), firstSgr(successLines[1]), 'error box uses a different background')
+  assert.ok(firstSgr(errorLines[1]).startsWith('\x1b[48;'), 'error box has a background')
   for (const child of boxed) {
     const lines = child.render(40)
     assert.ok(lines.length >= 2, 'boxed rows have padding lines')

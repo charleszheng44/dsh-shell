@@ -637,7 +637,9 @@ export function editorPolicy(
 export function headerText(state: AppState): string {
   const attachment = state.attachment
   const sessionTitle = attachment.phase === 'attached' || attachment.phase === 'loading'
-    ? terminalSafeText(attachment.title).trim() || String(attachment.sessionId)
+    // A DSH title cannot inject a row break: whitespace collapses like the
+    // picker's labels, and an empty result falls back to the id.
+    ? terminalSafeText(attachment.title).replace(/\s+/g, ' ').trim() || String(attachment.sessionId)
     : 'no session'
   const projectTitle = state.selectedProject === 'all'
     ? 'All sessions'
@@ -662,12 +664,15 @@ export function formatTokens(count: number): string {
 export function statsText(attachment: AppState['attachment']): string {
   if (attachment.phase !== 'attached' || attachment.stats === undefined) return ''
   const { uncachedInputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, pressureTokens, contextWindow } = attachment.stats
-  const percent = contextWindow > 0 ? (pressureTokens / contextWindow) * 100 : 0
-  const cache = (cacheReadTokens > 0 || cacheWriteTokens > 0)
-    ? ` R${formatTokens(cacheReadTokens)}${cacheWriteTokens > 0 ? ` W${formatTokens(cacheWriteTokens)}` : ''}`
-    : ''
+  // A non-positive window is degenerate: no context percentage, no line.
+  if (contextWindow <= 0) return ''
+  const percent = (pressureTokens / contextWindow) * 100
+  // R and W gates are independent, like pi's footer: no "R0" when only cache
+  // writes exist.
+  const read = cacheReadTokens > 0 ? ` R${formatTokens(cacheReadTokens)}` : ''
+  const write = cacheWriteTokens > 0 ? ` W${formatTokens(cacheWriteTokens)}` : ''
   const context = contextStyle(percent, `${percent.toFixed(1)}%/${formatTokens(contextWindow)}`)
-  return `${footerStyle(`↑${formatTokens(uncachedInputTokens)} ↓${formatTokens(outputTokens)}${cache} `)}${context}`
+  return `${footerStyle(`↑${formatTokens(uncachedInputTokens)} ↓${formatTokens(outputTokens)}${read}${write} `)}${context}`
 }
 
 /** Picker items for a session list: the empty case shows a notice row. */
