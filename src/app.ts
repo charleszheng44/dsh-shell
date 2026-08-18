@@ -310,7 +310,8 @@ export class App {
     this.setState({
       projects: projectRows(workspaces.value.items),
       sessions: rows,
-      notice: undefined,
+      // Only a connected refresh may clear a disconnect instruction.
+      notice: this.state.connection === 'connected' ? undefined : this.state.notice,
     })
     this.rowsCache = {
       workspaces: workspaces.value.items,
@@ -424,6 +425,13 @@ export class App {
       lastSeq = next.lastSeq
       transcript = next.rows
       partial = next.partial
+    }
+    // The connection may have died while history was loading (gap, stream
+    // end, stream/error, flood): do not claim a live attachment or clear
+    // the disconnect instruction in that case.
+    if (this.state.connection !== 'connected') {
+      this.setState({ attachment: emptyAttachment })
+      return
     }
     this.setState({
       attachment: {

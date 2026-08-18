@@ -456,3 +456,51 @@ test('steady-state overlap is dropped without rendering a duplicate', async () =
     assert.equal(after.attachment.transcript.length, before.attachment.transcript.length)
   }
 })
+
+test('a disconnect during history load does not install attached or clear the notice', async () => {
+  const port = new FakePort()
+  port.historyEvents = { s1: [userText(1, 'q')] }
+  const { app, view } = await booted(port)
+  let releaseHistory: (value: Awaited<ReturnType<DshPort['loadHistory']>>) => void = () => undefined
+  const original = port.loadHistory.bind(port)
+  port.loadHistory = (sessionId) => new Promise((resolve) => {
+    releaseHistory = resolve
+    void original(sessionId)
+  })
+  const attach = app.attach('s1' as never)
+  await Promise.resolve()
+  // The stream dies while history is loading.
+  port.push({ type: 'stream/error', error: { code: 'internal', message: 'boom', details: {} } } as never)
+  await flush()
+  releaseHistory({ ok: true, value: { events: [{ event: userText(1, 'q') }], hasMore: false } })
+  await attach
+  const last = view.renders.at(-1)
+  assert.equal(last?.connection, 'disconnected')
+  assert.equal(last?.attachment.phase, 'none')
+  assert.match(last?.notice ?? '', /Disconnected/)
+})
+
+test('a flood during history load disconnects instead of attaching', async () => {
+  const port = new FakePort()
+  port.historyEvents = { s1: [userText(1, 'q')] }
+  const { app, view } = await booted(port)
+  let releaseHistory: (value: Awaited<ReturnType<DshPort['loadHistory']>>) => void = () => undefined
+  const original = port.loadHistory.bind(port)
+  port.loadHistory = (sessionId) => new Promise((resolve) => {
+    releaseHistory = resolve
+    void original(sessionId)
+  })
+  const attach = app.attach('s1' as never)
+  await Promise.resolve()
+  // Exceed the flood cap while loading.
+  for (let seq = 2; seq <= 10_002; seq += 1) {
+    port.push(sessionFrame('s1', userText(seq, `flood ${seq}`)))
+  }
+  await flush()
+  releaseHistory({ ok: true, value: { events: [{ event: userText(1, 'q') }], hasMore: false } })
+  await attach
+  const last = view.renders.at(-1)
+  assert.equal(last?.connection, 'disconnected')
+  assert.equal(last?.attachment.phase, 'none')
+  assert.match(last?.notice ?? '', /flood/)
+})
