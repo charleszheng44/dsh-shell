@@ -137,8 +137,8 @@ export async function main(argv: readonly string[]): Promise<number> {
   }
   process.on('uncaughtException', onUncaught)
 
-  view.start()
   try {
+    view.start()
     const boot = await app.boot()
     if (!boot.ok) {
       console.error(`dsh-tui: ${origin}: ${boot.error.message}`)
@@ -150,8 +150,7 @@ export async function main(argv: readonly string[]): Promise<number> {
   }
   const code = await exitPromise
   process.removeListener('uncaughtException', onUncaught)
-  return code
-}
+  return code}
 
 // Direct execution: run the real entry.
 const isMain = process.argv[1] !== undefined
