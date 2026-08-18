@@ -260,11 +260,11 @@ export class App {
     if (generation !== this.generation || this.closed) return
     if (!history.ok) {
       if (history.error.code === 'session-not-found') {
-        this.setState({
-          attachment: emptyAttachment,
-          notice: 'Session no longer exists',
-        })
+        this.setState({ attachment: emptyAttachment })
         await this.openSessionPicker()
+        // The picker refresh clears notices; re-assert the reason afterward so
+        // returning to the picker stays explained.
+        this.setState({ notice: 'Session no longer exists' })
       } else {
         this.setState({
           attachment: emptyAttachment,
