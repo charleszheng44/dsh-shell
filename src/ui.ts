@@ -715,7 +715,8 @@ export function queuedText(attachment: AppState['attachment']): string {
   const first = queued[0]
   const preview = first === undefined ? '' : promptPreview(first)
   const count = queued.length === 1 ? '1 prompt' : `${queued.length} prompts`
-  return footerStyle(preview === '' ? `⏳ ${count} queued` : `⏳ ${count} queued: "${preview}"`)
+  // No emoji here: U+23F3 renders double-width or tofu on legacy fonts.
+  return footerStyle(preview === '' ? `${count} queued` : `${count} queued: "${preview}"`)
 }
 
 /** First text part of a queued message, collapsed and bounded for one line. */
@@ -745,10 +746,13 @@ export function questionCardText(questions: readonly QuestionItem[]): string {
       .join('\n')
     const text = terminalSafeText(question.question).replace(/\s+/g, ' ').trim()
     const select = question.multiSelect === true ? ' (choose any)' : ''
+    // The detail is flattened to one run: for plan-review asks the detail IS
+    // the plan markdown, and the terminal card shows it collapsed (the Web
+    // renders it as structured text).
     const detail = question.detail === undefined || question.detail === ''
       ? ''
       : `\n  ${terminalSafeText(question.detail).replace(/\s+/g, ' ').trim()}`
-    return `❓ ${text}${select}${detail}${options === '' ? '' : `\n${options}`}`
+    return `? ${text}${select}${detail}${options === '' ? '' : `\n${options}`}`
   }).join('\n')
 }
 

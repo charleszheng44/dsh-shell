@@ -464,22 +464,22 @@ test('questionCardText renders the question and its numbered options', () => {
   const text = questionCardText([
     { id: 'qa', question: 'Approve the change?', options: [{ label: 'Yes' }, { label: 'No' }] },
   ])
-  assert.ok(text.includes('❓ Approve the change?'), text)
+  assert.ok(text.includes('? Approve the change?'), text)
   assert.ok(text.includes('1. Yes'), text)
   assert.ok(text.includes('2. No'), text)
   // Detail renders under the question (plan-review asks carry the plan
   // there), and multi-select is marked.
   const detailed = questionCardText([{ id: 'qd', question: 'Review the plan?', detail: 'Plan: ship it', multiSelect: true, options: [{ label: 'a' }, { label: 'b' }] }])
-  assert.ok(detailed.includes('❓ Review the plan? (choose any)'), detailed)
+  assert.ok(detailed.includes('? Review the plan? (choose any)'), detailed)
   assert.ok(detailed.includes('Plan: ship it'), detailed)
   // No options: just the question. Multi-question requests stack.
   const plain = questionCardText([{ id: 'qb', question: 'Anything else?' }])
-  assert.equal(plain, '❓ Anything else?')
+  assert.equal(plain, '? Anything else?')
   const stacked = questionCardText([
     { id: 'qa', question: 'A' },
     { id: 'qb', question: 'B' },
   ])
-  assert.ok(stacked.includes('❓ A\n❓ B'), stacked)
+  assert.ok(stacked.includes('? A\n? B'), stacked)
   // Host text cannot inject row breaks or escapes.
   const hostile = questionCardText([{ id: 'qc', question: 'x\ny', options: [{ label: 'z\tw' }] }])
   assert.ok(!hostile.includes('\n❓') && hostile.includes('x y'), hostile)
