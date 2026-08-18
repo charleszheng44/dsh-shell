@@ -60,7 +60,9 @@ export function partialSegments(partial: PartialAssistant): readonly AssistantSe
     if (block === undefined) continue
     if (block.final !== undefined) {
       segments.push(block.final)
-    } else if (block.type === 'text') {
+    } else if (block.type === 'text' || (block.type === undefined && block.text !== '')) {
+      // text-delta chunks only ever carry visible text; a delta that arrived
+      // before its block-start is therefore text even without a type yet.
       segments.push({ kind: 'text', text: block.text })
     }
   }
@@ -78,11 +80,22 @@ export function applyEvent(state: TranscriptState, event: SessionEvent): Transcr
       .filter((block) => block.type === 'text')
       .map((block) => (block.type === 'text' ? block.text : ''))
       .join('\n')
+    // An image-only or empty user message renders nothing.
+    if (text === '') return base
     return { ...base, rows: [...state.rows, { kind: 'user', text }] }
   }
 
   if (event.type === 'assistant/chunk') {
     return applyChunk(base, event.data.turn, event.data.step, event.data.chunk)
+  }
+
+  if (event.type === 'turn/end') {
+    // A turn that ended without a finalized assistant/message (error, abort,
+    // or empty turn) must not leave abandoned partial text beside later rows.
+    if (state.partial !== undefined && state.partial.turn === event.data.turn) {
+      return { ...base, partial: undefined }
+    }
+    return base
   }
 
   if (event.type === 'assistant/message') {
@@ -138,8 +151,10 @@ function updateBlocks(blocks: Map<number, PartialBlock>, chunk: StreamChunk): Re
   if (chunk.type === 'block-start') {
     blocks.set(chunk.index, { type: chunk.blockType, text: '', final: undefined })
   } else if (chunk.type === 'text-delta') {
-    const current = blocks.get(chunk.index)
-    if (current === undefined || current.final !== undefined) return blocks
+    // Lazily create the accumulator if a delta arrives before its block-start
+    // (robust against reordered live chunks in PR 3).
+    const current = blocks.get(chunk.index) ?? { type: undefined, text: '', final: undefined }
+    if (current.final !== undefined) return blocks
     blocks.set(chunk.index, { ...current, text: current.text + chunk.text })
   } else if (chunk.type === 'block-end') {
     const block = chunk.block

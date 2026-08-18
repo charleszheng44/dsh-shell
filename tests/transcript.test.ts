@@ -222,3 +222,51 @@ test('segments keep block order when blocks interleave', () => {
     { kind: 'text', text: 'after tool' },
   ])
 })
+
+test('turn/end clears a partial that never finalized (error/aborted turn)', () => {
+  const state = projectEvents([
+    userMessage(1, { text: 'q1' }),
+    chunk(2, 0, 0, { type: 'block-start', index: 0, blockType: 'text' }),
+    chunk(3, 0, 0, { type: 'text-delta', index: 0, text: 'abandoned prefix' }),
+    { type: 'turn/end', seq: 4, time: 0, data: { turn: 0, reason: { kind: 'error' } } } as never,
+    userMessage(5, { text: 'q2' }),
+    assistantMessage(6, 1, 0, [{ type: 'text', text: 'final answer' }]),
+  ])
+  assert.equal(state.partial, undefined)
+  assert.deepEqual(state.rows.map((row) => row.kind), ['user', 'user', 'assistant'])
+})
+
+test('turn/end for a different turn leaves the partial intact', () => {
+  const state = projectEvents([
+    chunk(1, 1, 2, { type: 'block-start', index: 0, blockType: 'text' }),
+    chunk(2, 1, 2, { type: 'text-delta', index: 0, text: 'kept' }),
+    { type: 'turn/end', seq: 3, time: 0, data: { turn: 9, reason: { kind: 'stop' } } } as never,
+  ])
+  assert.deepEqual(partialSegments(state.partial as never), [{ kind: 'text', text: 'kept' }])
+})
+
+test('an empty or image-only user message renders no row', () => {
+  const empty = projectEvents([userMessage(1, { text: '' })])
+  assert.equal(empty.rows.length, 0)
+  const imageOnly = projectEvents([{
+    type: 'user/message',
+    seq: 1,
+    time: 0,
+    surfaceOp: 'append',
+    data: {
+      id: 'm1',
+      role: 'user',
+      content: [{ type: 'image', data: 'x', mediaType: 'image/png' }],
+      source: { kind: 'user' },
+    },
+  } as unknown as SessionEvent])
+  assert.equal(imageOnly.rows.length, 0)
+})
+
+test('a text-delta before its block-start still accumulates', () => {
+  const state = projectEvents([
+    chunk(1, 0, 0, { type: 'text-delta', index: 0, text: 'early ' }),
+    chunk(2, 0, 0, { type: 'text-delta', index: 0, text: 'delta' }),
+  ])
+  assert.deepEqual(partialSegments(state.partial as never), [{ kind: 'text', text: 'early delta' }])
+})
