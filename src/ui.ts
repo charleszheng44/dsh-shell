@@ -27,7 +27,7 @@ import {
 
 import type { AppState, AppView, ProjectRow, SessionRow, SubmitResult } from './app.js'
 import { partialSegments, type AssistantSegment, type TranscriptRow } from './transcript.js'
-import { assistantMarker, editorTheme, footerStyle, headerStyle, markdownTheme, pickerPanelStyle, userStyle } from './theme.js'
+import { assistantMarker, editorTheme, footerStyle, headerStyle, markdownTheme, pickerPanelStyle, userMarker, userStyle } from './theme.js'
 
 /** Safe picker label: the sanitized title (newlines collapsed so a DSH title
  *  cannot inject a row break into the SelectList), or a sanitized fallback so
@@ -231,12 +231,21 @@ export class PickerFrame implements Component {
   }
 }
 
-/** One transcript line component: user text or assistant Markdown. */
+/** One transcript line component: user text or assistant Markdown. Both carry
+ *  a marker in its own column (green dot for user prompts, cyan block for
+ *  model rows) so markers never interfere with Markdown parsing — a leading
+ *  code fence must still be detected — and user/assistant markers align. */
 function rowComponent(row: TranscriptRow): Component {
   if (row.kind === 'user') {
-    return new Text(userStyle(terminalSafeText(row.text)), 1, 0)
+    return new HStack([
+      { component: new Text(userMarker(), 0, 0), basis: 'auto', grow: 0 },
+      { component: new Text(userStyle(terminalSafeText(row.text)), 1, 0), basis: 'auto', grow: 1 },
+    ])
   }
-  return new Markdown(terminalSafeText(assistantMarkdown(row.segments)), 1, 0, markdownTheme)
+  return new HStack([
+    { component: new Text(assistantMarker(), 0, 0), basis: 'auto', grow: 0 },
+    { component: new Markdown(terminalSafeText(assistantMarkdown(row.segments)), 1, 0, markdownTheme), basis: 'auto', grow: 1 },
+  ])
 }
 
 /** Terminal view: owns the Pi TUI, renders AppState, and shows pickers. */

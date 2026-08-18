@@ -39,6 +39,13 @@ export function userStyle(text: string): string {
   return fgGreen(text)
 }
 
+/** User prompt marker: a green dot in its own column. U+25CF renders in
+ *  every terminal font (the earlier U+276F chevron showed as tofu on some
+ *  fonts). */
+export function userMarker(): string {
+  return fgGreen('● ')
+}
+
 /** Assistant response marker: a cyan block that prefixes model rows and the
  *  in-flight partial, chat-style. Rendered in its own component so it never
  *  interferes with Markdown parsing (e.g. a leading code fence). */
