@@ -10,7 +10,7 @@ import { basename } from 'node:path'
 import { test } from 'node:test'
 
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import type { SessionSummary, WorkspaceView } from '@deepseek-ai/dsh-host-apiproxy/api'
+import type { MuxFrame, SessionSummary, WorkspaceView } from '@deepseek-ai/dsh-host-apiproxy/api'
 
 import { App, sessionRows, type AppState, type AppView, type ProjectRow } from '../src/app.js'
 import type { DshPort } from '../src/dsh.js'
@@ -88,6 +88,12 @@ class FakePort implements DshPort {
   /** Per-session history events; absent sessionId means session-not-found. */
   historyEvents: Record<string, SessionEvent[]> = {}
   historyCalls: SessionId[] = []
+  /** Push one mux frame to the stream consumer; frames buffer until pumped. */
+  streamFrames: MuxFrame[] = []
+  streamOpened = false
+  streamEnded = false
+  private streamWaiters: Array<() => void> = []
+  private streamAbort: AbortSignal | undefined
 
   describe(signal?: AbortSignal): ReturnType<DshPort['describe']> {
     return this.describeResult
@@ -110,13 +116,36 @@ class FakePort implements DshPort {
     return { ok: true, value: { events: events.map((event) => ({ event })), hasMore: false } }
   }
 
-  // Minimal stream stub so the fake satisfies the widened DshPort; the
-  // streaming tests live with the app commit that follows.
-  async *stream(signal: AbortSignal, onOpen: () => void): AsyncIterable<never> {
+  async *stream(signal: AbortSignal, onOpen: () => void): AsyncIterable<MuxFrame> {
+    this.streamAbort = signal
+    signal.addEventListener('abort', () => {
+      this.streamEnded = true
+      this.notifyStream()
+    }, { once: true })
+    this.streamOpened = true
     onOpen()
-    await new Promise<void>(() => {
-      signal.addEventListener('abort', () => undefined, { once: true })
-    })
+    while (!this.streamEnded) {
+      while (this.streamFrames.length > 0) {
+        const frame = this.streamFrames.shift()
+        if (frame !== undefined) yield frame
+      }
+      if (this.streamEnded) return
+      await new Promise<void>((resolve) => { this.streamWaiters.push(resolve) })
+    }
+  }
+
+  pushFrame(frame: MuxFrame): void {
+    this.streamFrames.push(frame)
+    this.notifyStream()
+  }
+
+  endStream(): void {
+    this.streamEnded = true
+    this.notifyStream()
+  }
+
+  private notifyStream(): void {
+    for (const resolve of this.streamWaiters.splice(0)) resolve()
   }
 }
 

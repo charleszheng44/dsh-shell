@@ -17,8 +17,10 @@ import type { SessionSummary, WorkspaceId, WorkspaceView } from '@deepseek-ai/ds
 // SessionSummary.projections.values.title is typed; type-only, no runtime cost.
 import type {} from '@deepseek-ai/dsh-session-title/types'
 
+import type { MuxFrame } from '@deepseek-ai/dsh-host-apiproxy/api'
+
 import type { DshPort, HostDescription } from './dsh.js'
-import { projectEvents, type PartialAssistant, type TranscriptRow } from './transcript.js'
+import { applyEvent, projectEvents, type PartialAssistant, type TranscriptRow } from './transcript.js'
 
 /** A pickable project row: the special "All sessions" bucket or one Workspace. */
 export type ProjectRow = {
@@ -162,16 +164,122 @@ export class App {
     return this.state
   }
 
-  /** Startup: describe, mark connected, refresh lists, open the project picker. */
+  /** Startup: describe, start the mux stream, await its physical readiness,
+   *  then mark connected and open the project picker. */
   async boot(): Promise<RpcBootResult> {
     this.setState({ connection: 'connecting' })
     const describe = await this.port.describe(this.signal)
     if (!describe.ok) {
       return { ok: false, error: describe.error }
     }
+    const ready = await this.startStream()
+    if (!ready) {
+      return { ok: false, error: { code: 'internal', message: 'event stream failed to open' } }
+    }
     this.setState({ connection: 'connected' })
     await this.openProjectPicker()
     return { ok: true, host: describe.value }
+  }
+
+  /**
+   * Start the mux pump and wait for its physical onOpen. The iterable is
+   * lazy, so this returns only once the socket is actually readable; frames
+   * keep draining while the caller proceeds.
+   */
+  private startStream(): Promise<boolean> {
+    return new Promise((resolve) => {
+      let settled = false
+      const settle = (opened: boolean): void => {
+        if (settled) return
+        settled = true
+        resolve(opened)
+      }
+      this.streamPump = this.pumpStream(() => settle(true), () => settle(false))
+    })
+  }
+
+  /** The active stream pump, awaited at shutdown so no socket is left live. */
+  private streamPump: Promise<void> | undefined
+  /** Set on stream/error so the pump stops consuming like a stream end. */
+  private streamAborted = false
+
+  /** Drain mux frames until the stream ends, throws, or emits stream/error. */
+  private async pumpStream(onOpen: () => void, onEnded: () => void): Promise<void> {
+    // Distinguish the stream's own throw (design: mark disconnected) from a
+    // throw inside onFrame's render path (design: run the shutdown path).
+    let renderError: unknown
+    try {
+      for await (const frame of this.port.stream(this.signal, onOpen)) {
+        if (this.closed) break
+        try {
+          this.onFrame(frame)
+        } catch (error) {
+          renderError = error
+          throw error
+        }
+        if (this.streamAborted) break
+      }
+    } catch (error) {
+      if (!this.signal.aborted && renderError === undefined) {
+        // The stream itself failed: disconnected, per the failure table.
+        onEnded()
+        this.setState({
+          connection: 'disconnected',
+          notice: 'Disconnected: restart dsh-tui to reconnect',
+        })
+        return
+      }
+      throw error
+    }
+    onEnded()
+    if (!this.closed) {
+      this.setState({
+        connection: 'disconnected',
+        notice: 'Disconnected: restart dsh-tui to reconnect',
+      })
+    }
+  }
+
+  /** Route one mux frame: buffer or apply selected-session events, ignore the rest. */
+  private onFrame(frame: MuxFrame): void {
+    // Once closed or disconnected, no further frame may mutate the view.
+    if (this.closed || this.state.connection !== 'connected') return
+    if (frame.type === 'stream/error') {
+      this.setState({ connection: 'disconnected', notice: 'Disconnected: stream error' })
+      this.streamAborted = true
+      return
+    }
+    if (frame.type !== 'session/event') return
+    const attachment = this.state.attachment
+    if (attachment.phase === 'none' || attachment.sessionId !== frame.sessionId) return
+    if (attachment.phase === 'loading') {
+      // Buffer only what a history round-trip needs; a flooding host past the
+      // cap is treated as a stream failure rather than unbounded growth.
+      if (attachment.buffered.length >= MAX_BUFFERED_EVENTS) {
+        this.setState({ connection: 'disconnected', notice: 'Disconnected: event flood' })
+        return
+      }
+      this.setState({ attachment: { ...attachment, buffered: [...attachment.buffered, frame.event] } })
+      return
+    }
+    // attached: apply live events under the overlap and continuity rules.
+    if (frame.event.seq <= attachment.lastSeq) return
+    if (frame.event.seq !== attachment.lastSeq + 1) {
+      this.setState({ connection: 'disconnected', notice: 'Disconnected: sequence gap' })
+      return
+    }
+    const next = applyEvent(
+      { rows: attachment.transcript, partial: attachment.partial, lastSeq: attachment.lastSeq },
+      frame.event,
+    )
+    this.setState({
+      attachment: {
+        ...attachment,
+        lastSeq: next.lastSeq,
+        transcript: next.rows,
+        partial: next.partial,
+      },
+    })
   }
 
   /**
@@ -292,26 +400,55 @@ export class App {
       }
       return
     }
+    // Fold the history tail, then the events buffered while it loaded, under
+    // the same overlap and continuity rules as live frames.
     const projected = projectEvents(history.value.events.map((entry) => entry.event))
+    const attachment = this.state.attachment
+    const buffered = attachment.phase === 'loading' && attachment.sessionId === sessionId && attachment.generation === generation
+      ? attachment.buffered
+      : []
+    let lastSeq = projected.lastSeq
+    let transcript = projected.rows
+    let partial = projected.partial
+    for (const event of buffered) {
+      if (event.seq <= lastSeq) continue
+      if (event.seq !== lastSeq + 1) {
+        this.setState({
+          attachment: emptyAttachment,
+          connection: 'disconnected',
+          notice: 'Disconnected: sequence gap',
+        })
+        return
+      }
+      const next = applyEvent({ rows: transcript, partial, lastSeq }, event)
+      lastSeq = next.lastSeq
+      transcript = next.rows
+      partial = next.partial
+    }
     this.setState({
       attachment: {
         phase: 'attached',
         sessionId,
         generation,
-        lastSeq: projected.lastSeq,
-        transcript: projected.rows,
-        partial: projected.partial,
+        lastSeq,
+        transcript,
+        partial,
         sending: false,
       },
       notice: undefined,
     })
   }
 
-  /** Idempotent shutdown: stop the view and drop future work. */
+  /** Idempotent shutdown: stop the view and settle the stream pump. */
   shutdown(): void {
     if (this.closed) return
     this.closed = true
     this.view.stop()
+  }
+
+  /** Await the stream pump's settlement (used by the CLI lifecycle). */
+  async waitForPump(): Promise<void> {
+    await this.streamPump
   }
 
   private setState(patch: Partial<AppState>): void {
@@ -319,6 +456,10 @@ export class App {
     this.view.render(this.state)
   }
 }
+
+/** Upper bound on events buffered while history loads (a history round-trip
+ *  needs only the frames between the request and its response). */
+const MAX_BUFFERED_EVENTS = 10_000
 
 /** Boot result: success carries the host description; failure carries the safe error. */
 export type RpcBootResult =

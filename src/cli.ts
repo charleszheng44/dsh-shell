@@ -18,6 +18,9 @@ import { TerminalView, terminalSafeText } from './ui.js'
 /** Default loopback host, per the design doc. */
 export const DEFAULT_HOST = 'http://127.0.0.1:3080'
 
+/** Upper bound on waiting for the stream pump to settle after abort. */
+export const PUMP_SETTLE_TIMEOUT_MS = 2_000
+
 export type HostParseResult =
   | { ok: true; origin: URL }
   | { ok: false; error: string }
@@ -136,7 +139,17 @@ export async function main(argv: readonly string[]): Promise<number> {
   const shutdown = createLifecycle({
     abort: () => controller.abort(),
     stop: () => app.shutdown(),
-    exit: (code) => { resolveExit(code) },
+    // The published client's abort closes the WebSocket, so the pump settles
+    // without any timeout or forced exit; resolve only once it has.
+    exit: (code) => {
+      // The published client's abort closes the WebSocket, so the pump
+      // normally settles immediately; a host that ignores the closing
+      // handshake must not hang the exit, so bound the wait.
+      const deadline = AbortSignal.timeout(PUMP_SETTLE_TIMEOUT_MS)
+      void Promise.race([app.waitForPump(), new Promise((resolve) => {
+        deadline.addEventListener('abort', resolve, { once: true })
+      })]).finally(() => { resolveExit(code) })
+    },
     disposeSignals,
   })
 
