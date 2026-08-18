@@ -300,3 +300,21 @@ test('a stale result cannot unwedge a newer attachment in flight', async () => {
   assert.deepEqual(await second, { ok: true })
   assert.equal(view.renders.at(-1)?.attachment.phase, 'attached')
 })
+
+test('a late echo cannot wipe the slash-command instruction', async () => {
+  const port = new FakePort()
+  const { app, view } = await booted(port)
+  await attach(app, port)
+  let release!: (value: Awaited<ReturnType<DshPort['prompt']>>) => void
+  port.prompt = () => new Promise((resolve) => { release = resolve })
+  const pending = app.submit('hello')
+  release({ ok: true, value: { accepted: true } })
+  assert.deepEqual(await pending, { ok: true })
+  assert.equal(view.renders.at(-1)?.notice, 'Accepted by DSH')
+  // Slash input after acceptance, with the accepted prompt's echo still due.
+  assert.deepEqual(await app.submit('/model'), { ok: false, reason: 'slash-command' })
+  assert.equal(view.renders.at(-1)?.notice, 'Slash commands require the Web UI')
+  port.push({ type: 'session/event', sessionId: 's1', event: userText(2, 'hello') } as never)
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  assert.equal(view.renders.at(-1)?.notice, 'Slash commands require the Web UI')
+})

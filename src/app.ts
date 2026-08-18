@@ -497,7 +497,10 @@ export class App {
     if (trimmed === '') return { ok: false, reason: 'blank' }
     if (trimmed.startsWith('/')) {
       // Design: slash commands are rejected locally, the text is retained,
-      // and the footer instruction is surfaced.
+      // and the footer instruction is surfaced. Disarm any pending accepted
+      // marker so a late echo from an earlier submission cannot wipe the
+      // instruction notice.
+      if (this.pendingAccepted === attachment.generation) this.pendingAccepted = undefined
       this.setState({ notice: 'Slash commands require the Web UI' })
       return { ok: false, reason: 'slash-command' }
     }
@@ -519,8 +522,9 @@ export class App {
       || current.sessionId !== sessionId) {
       // Clear the in-flight flag only when the attachment is still this one:
       // a newer attachment's in-flight submission must not be unwedged by a
-      // late result from an older generation.
-      if (current.phase === 'attached' && current.generation === generation) {
+      // late result from an older generation. Skip the render after
+      // shutdown (the view is stopped; render would be a no-op).
+      if (!this.closed && current.phase === 'attached' && current.generation === generation) {
         this.setState({ attachment: { ...current, sending: false } })
       }
       if (this.pendingAccepted === generation) this.pendingAccepted = undefined

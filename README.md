@@ -79,8 +79,8 @@ node --import tsx packages/test-support/llm-mock-server/src/bin.ts --port 8000 \
   --success-text $'```ts\nconst answer = 42\n```'
 # Terminal 2: DSH web host against the mock
 DEEPSEEK_BASE_URL=http://127.0.0.1:8000/v1 DEEPSEEK_API_KEY=mock-key pnpm dsh --profile web
-# Terminal 3: this TUI
-pnpm dev -- --host http://127.0.0.1:3080
+# Terminal 3: this TUI (no `--` separator: pnpm would pass it to the script)
+pnpm dev --host http://127.0.0.1:3080
 ```
 
 Text entered in the TUI appears in the Web UI only after DSH logs it, and the
