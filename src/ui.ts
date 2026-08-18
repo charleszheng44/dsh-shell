@@ -467,7 +467,7 @@ export class TerminalView implements AppView {
     // attachment phase begins.
     this.transcript.removeChild(this.hint)
     if (attachment.phase === 'none') {
-      this.hint.setText(footerStyle('Press Ctrl+P to choose a project and session'))
+      this.hint.setText(footerStyle('Press Ctrl+P or Ctrl+S to pick a project and session'))
       this.transcript.addChild(this.hint)
     }
     // The live partial updates in place (single Markdown component) and stays

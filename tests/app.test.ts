@@ -323,6 +323,18 @@ test('summaryStats reads token and context numbers structurally', () => {
     },
   })
   assert.equal(summaryStats(zero), undefined)
+  // Negative token counts are rejected too.
+  const negative = summary({
+    sessionId: 's6' as never,
+    projections: {
+      asOfSeq: 1,
+      values: {
+        tokenUsage: { uncachedInputTokens: -5, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 },
+        contextPressure: { pressureTokens: 10, contextWindow: 1000 },
+      } as never,
+    },
+  })
+  assert.equal(summaryStats(negative), undefined)
 })
 
 test('attach carries the picker title and the footer stats snapshot', async () => {
