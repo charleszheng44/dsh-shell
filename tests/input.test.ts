@@ -13,15 +13,32 @@ import { test } from 'node:test'
 import type { MuxFrame } from '@deepseek-ai/dsh-host-apiproxy/api'
 import type { SessionEvent } from '@deepseek-ai/dsh-session/types'
 
-import { App, parseQuestionAnswers, type AppState, type AppView, type ModelChoice } from '../src/app.js'
+import { App, CREATE_PROJECT, CREATE_SESSION, parseQuestionAnswers, type AppState, type AppView, type ModelChoice, type ProjectRow, type SessionRow } from '../src/app.js'
 import type { DshPort } from '../src/dsh.js'
 
 class FakeView implements AppView {
   renders: AppState[] = []
   render(state: AppState): void { this.renders.push(state) }
-  openProjectPicker(): void {}
-  openSessionPicker(): void {}
-  closePicker(): void {}
+  projectPickerRows: readonly ProjectRow[] | undefined
+  onProjectSelect: ((row: ProjectRow) => void) | undefined
+  sessionPickerRows: readonly SessionRow[] | undefined
+  onSessionSelect: ((row: SessionRow) => void) | undefined
+  openProjectPicker(rows: readonly ProjectRow[], onSelect: (row: ProjectRow) => void): void {
+    this.projectPickerRows = rows
+    this.onProjectSelect = onSelect
+  }
+  openSessionPicker(rows: readonly SessionRow[], onSelect: (row: SessionRow) => void): void {
+    this.sessionPickerRows = rows
+    this.onSessionSelect = onSelect
+  }
+  createInputPicks: Array<{ onSubmit: (path: string) => void; onCancel: () => void }> = []
+  openCreateProjectInput(onSubmit: (path: string) => void, onCancel: () => void): void {
+    this.createInputPicks.push({ onSubmit, onCancel })
+  }
+  closePicker(): void {
+    this.projectPickerRows = undefined
+    this.sessionPickerRows = undefined
+  }
   modelPicks: Array<{ choices: readonly ModelChoice[]; onSelect: (choice: ModelChoice) => void; onCancel: () => void }> = []
   openModelPicker(choices: readonly ModelChoice[], onSelect: (choice: ModelChoice) => void, onCancel: () => void): void {
     this.modelPicks.push({ choices, onSelect, onCancel })
@@ -31,8 +48,8 @@ class FakeView implements AppView {
 }
 
 class FakePort implements DshPort {
-  workspaces = []
-  sessions = []
+  workspaces: Array<{ workspaceId: string; path: string; title: string; sessionIds: string[]; createdAt: string; updatedAt: string }> = []
+  sessions: Array<{ sessionId: string; blank?: boolean; origin?: string; cwd?: string; projections?: unknown }> = []
   historyEvents: Record<string, SessionEvent[]> = {}
   promptCalls: Array<{ sessionId: string; text: string; mode: string }> = []
   promptResult: Awaited<ReturnType<DshPort['prompt']>> = { ok: true, value: { accepted: true } }
@@ -61,6 +78,25 @@ class FakePort implements DshPort {
     return this.selectModelResult
   }
 
+  createWorkspaceCalls: Array<string> = []
+  createWorkspaceResult: Awaited<ReturnType<DshPort['createWorkspace']>> = {
+    ok: true,
+    value: { workspace: { workspaceId: 'w-new', path: '/tmp/newproj', title: 'newproj', sessionIds: [], createdAt: '', updatedAt: '' } as never, created: true },
+  }
+
+  async createWorkspace(path: string): Promise<Awaited<ReturnType<DshPort['createWorkspace']>>> {
+    this.createWorkspaceCalls.push(path)
+    return this.createWorkspaceResult
+  }
+
+  createSessionCalls: Array<{ workspaceId: string | undefined }> = []
+  createSessionResult: Awaited<ReturnType<DshPort['createSession']>> = { ok: true, value: { sessionId: 's-new' as never } }
+
+  async createSession(workspaceId: string | undefined): Promise<Awaited<ReturnType<DshPort['createSession']>>> {
+    this.createSessionCalls.push({ workspaceId })
+    return this.createSessionResult
+  }
+
   updateQueueCalls: Array<{ sessionId: string; itemId: string; action: unknown }> = []
   updateQueueResult: Awaited<ReturnType<DshPort['updateQueue']>> = { ok: true, value: { accepted: true } }
 
@@ -83,11 +119,11 @@ class FakePort implements DshPort {
   }
 
   async listWorkspaces(): Promise<Awaited<ReturnType<DshPort['listWorkspaces']>>> {
-    return { ok: true, value: { items: [], archivedSessionIds: [] } }
+    return { ok: true, value: { items: this.workspaces as never, archivedSessionIds: [] } }
   }
 
   async listSessions(): Promise<Awaited<ReturnType<DshPort['listSessions']>>> {
-    return { ok: true, value: { items: [] } }
+    return { ok: true, value: { items: this.sessions as never } }
   }
 
   async loadHistory(sessionId: string): Promise<Awaited<ReturnType<DshPort['loadHistory']>>> {
@@ -689,4 +725,78 @@ test('attach and selectModel refresh the footer model label', async () => {
   assert.equal(view.renders.at(-1)?.notice, 'boom')
   const still = view.renders.at(-1)?.attachment
   assert.equal(still?.phase === 'attached' ? still.modelLabel : undefined, 'Provider One · Model Two (High)')
+})
+
+test('create project: picker row opens the path input, submit creates and opens the new project sessions', async () => {
+  const port = new FakePort()
+  const { app, view } = await booted(port)
+  await app.openProjectPicker()
+  assert.equal(view.projectPickerRows?.at(-1)?.key, CREATE_PROJECT)
+  view.onProjectSelect?.(view.projectPickerRows?.at(-1) as never)
+  assert.equal(view.createInputPicks.length, 1)
+  // The path is trimmed before the write; success selects the new project
+  // and opens its session picker (only the create row for an empty project).
+  view.createInputPicks.at(-1)?.onSubmit('  /tmp/newproj  ')
+  await flush()
+  assert.deepEqual(port.createWorkspaceCalls, ['/tmp/newproj'])
+  assert.equal(view.renders.at(-1)?.selectedProject, 'w-new')
+  assert.deepEqual(view.sessionPickerRows?.map((row) => row.sessionId), [CREATE_SESSION])
+})
+
+test('create project: failure shows a notice and reopens the picker; ESC just reopens', async () => {
+  const port = new FakePort()
+  port.createWorkspaceResult = { ok: false, error: { code: 'workspace-invalid-path', message: 'no such directory', details: { path: '/nope' } } as never }
+  const { app, view } = await booted(port)
+  await app.openProjectPicker()
+  view.onProjectSelect?.(view.projectPickerRows?.at(-1) as never)
+  const input = view.createInputPicks.at(-1)
+  input?.onSubmit('/nope')
+  await flush()
+  assert.equal(view.renders.at(-1)?.notice, 'Create project failed: no such directory')
+  assert.ok(view.projectPickerRows !== undefined, 'project picker reopens')
+  assert.equal(port.createWorkspaceCalls.length, 1, 'a write is never retried')
+  // ESC from the path input returns to the refreshed project picker without
+  // any write.
+  view.onProjectSelect?.(view.projectPickerRows?.at(-1) as never)
+  view.createInputPicks.at(-1)?.onCancel()
+  await flush()
+  assert.ok(view.projectPickerRows !== undefined)
+  assert.equal(port.createWorkspaceCalls.length, 1)
+})
+
+test('create session: selects the project, writes workspaceId, and attaches to the fresh session', async () => {
+  const port = new FakePort()
+  port.workspaces = [{ workspaceId: 'w1', path: '/tmp/p', title: 'p', sessionIds: ['s1'], createdAt: '', updatedAt: '' }]
+  port.sessions = [{ sessionId: 's1' }]
+  const { app, view } = await booted(port)
+  await app.selectProject({ key: 'w1' as never, title: 'p' })
+  const createRow = view.sessionPickerRows?.at(-1)
+  assert.equal(createRow?.sessionId, CREATE_SESSION)
+  view.onSessionSelect?.(createRow as never)
+  await flush()
+  assert.deepEqual(port.createSessionCalls, [{ workspaceId: 'w1' }])
+  const attached = view.renders.at(-1)?.attachment
+  assert.equal(attached?.phase, 'attached')
+  assert.equal(attached?.sessionId, 's-new')
+})
+
+test('create session: All sessions omits the workspace; a failure reopens the picker with a notice', async () => {
+  const port = new FakePort()
+  port.workspaces = [{ workspaceId: 'w1', path: '/tmp/p', title: 'p', sessionIds: ['s1'], createdAt: '', updatedAt: '' }]
+  port.sessions = [{ sessionId: 's1' }]
+  const { app, view } = await booted(port)
+  await app.selectProject({ key: 'all', title: 'All sessions' })
+  view.onSessionSelect?.(view.sessionPickerRows?.at(-1) as never)
+  await flush()
+  assert.deepEqual(port.createSessionCalls, [{ workspaceId: undefined }])
+  assert.equal(view.renders.at(-1)?.attachment.phase, 'attached')
+  // A rejected create reopens the session picker and never retries.
+  port.createSessionResult = { ok: false, error: { code: 'session-conflict', message: 'conflict', details: { sessionId: 's2', requestedCwd: '/tmp' } } as never }
+  view.closePicker()
+  await app.openSessionPicker()
+  view.onSessionSelect?.(view.sessionPickerRows?.at(-1) as never)
+  await flush()
+  assert.equal(view.renders.at(-1)?.notice, 'Create session failed: conflict')
+  assert.ok(view.sessionPickerRows !== undefined, 'session picker reopens')
+  assert.equal(port.createSessionCalls.length, 2)
 })

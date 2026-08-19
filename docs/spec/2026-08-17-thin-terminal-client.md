@@ -120,12 +120,27 @@ The project selector contains `All sessions` followed by the Workspaces returned
 
 - hides IDs in `archivedSessionIds`;
 - hides `origin: "subagent"` because ordinary `session.prompt` does not establish subagent continuation routing;
-- hides blank sessions because this release does not implement DSH's New Session reuse flow;
+- hides blank sessions (the list shows attachable, non-blank sessions only);
 - preserves each Workspace's `sessionIds` order within a Workspace;
 - uses `session.list` order, newest first, for `All sessions`;
-- labels a row with the `title` projection when it is a string, otherwise the basename of `cwd`, otherwise the session ID.
+- labels a row with the `title` projection when it is a string, otherwise the basename of `cwd`, otherwise the session ID;
+- appends a `＋ Create new session` action row, and an empty project shows
+  only that action (the picker never attaches by itself).
 
-An empty project remains selectable and shows `No attachable sessions`; it does not create a session. Opening either picker refreshes both Workspace and Session lists so a separate Host event projection for sidebar changes is unnecessary.
+The project picker appends a `＋ Create new project` action row. Selecting it
+opens a path-entry modal (pi `Input`); Enter submits the trimmed path to
+`workspace.create` — which registers an EXISTING directory, the host does no
+mkdir — and ESC returns to the refreshed project picker. A failed create
+surfaces the host error in the header and reopens the picker. On success the
+new (or idempotently adopted) project becomes the selection and its session
+picker opens.
+
+Selecting `＋ Create new session` calls `session.create` with the selected
+Workspace's id — or with no project under `All sessions`, which uses the Host
+cwd — and attaches to the fresh blank session immediately. A failed create
+surfaces the error and reopens the session picker. Both writes are never
+retried; the pickers refresh both Workspace and Session lists when they open,
+so a separate Host event projection for sidebar changes is unnecessary.
 
 ## Terminal-safe text
 

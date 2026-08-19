@@ -35,6 +35,7 @@ import type {
   QueueAction,
   SessionModels,
   SessionSummary,
+  WorkspaceId,
   WorkspaceView,
 } from '@deepseek-ai/dsh-host-apiproxy/api'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
@@ -85,6 +86,17 @@ export interface DshPort {
   }, signal?: AbortSignal): Promise<RpcResult<{
     selected: ModelSelection
   }>>
+  /** Create (or idempotently adopt) a project over an EXISTING directory
+   *  (the host does no mkdir). A write: never retried. */
+  createWorkspace(path: string, signal?: AbortSignal): Promise<RpcResult<{
+    workspace: WorkspaceView
+    created: boolean
+  }>>
+  /** Create a session (and its idle agent) in the given project; an omitted
+   *  project uses the host cwd. A write: never retried. */
+  createSession(workspaceId: WorkspaceId | undefined, signal?: AbortSignal): Promise<RpcResult<{
+    sessionId: SessionId
+  }>>
 }
 
 /** Upper bound on one WebSocket message: a hostile host must not be able to
@@ -132,6 +144,10 @@ export interface PortClient {
       items: WorkspaceView[]
       archivedSessionIds: SessionId[]
     }>>
+    create(payload: { path: string }, signal?: AbortSignal): Promise<RpcResponse<{
+      workspace: WorkspaceView
+      created: boolean
+    }>>
   }
   sessions: {
     list(payload: {}, signal?: AbortSignal): Promise<RpcResponse<{
@@ -166,6 +182,15 @@ export interface PortClient {
       reasoningEffort?: string
     }, signal?: AbortSignal): Promise<RpcResponse<{
       selected: ModelSelection
+    }>>
+    create(payload: {
+      workspaceId?: WorkspaceId
+      cwd?: string
+      sessionId?: SessionId
+      agentPreset?: string
+    }, signal?: AbortSignal): Promise<RpcResponse<{
+      sessionId: SessionId
+      agentPreset?: string
     }>>
   }
   /** Answer a host question by echoing its server-request rpcId. */
@@ -204,6 +229,11 @@ export function createDshPort(client: PortClient): DshPort {
       model: selection.model,
       ...(selection.reasoningEffort === undefined ? {} : { reasoningEffort: selection.reasoningEffort }),
     }, signal), false),
+    createWorkspace: (path, signal) => unary(() => client.workspace.create({ path }, signal), false),
+    createSession: (workspaceId, signal) => unary(() => client.sessions.create(
+      workspaceId === undefined ? {} : { workspaceId },
+      signal,
+    ), false),
     async *stream(signal, onOpen) {
       // Strip the RPC envelope from every mux frame but keep its rpcId (the
       // question/requested answer must echo it); stream errors surface as the

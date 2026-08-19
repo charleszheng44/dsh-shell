@@ -59,6 +59,7 @@ class FakeView implements AppView {
     this.onSessionSelect = onSelect
   }
 
+  openCreateProjectInput(): void {}
   closePicker(): void {
     this.projectPickerRows = undefined
     this.sessionPickerRows = undefined
@@ -148,6 +149,14 @@ class FakePort implements DshPort {
     return this.selectModelResult
   }
 
+  async createWorkspace(path: string): Promise<Awaited<ReturnType<DshPort['createWorkspace']>>> {
+    return { ok: true, value: { workspace: { workspaceId: 'w-new' as never, path, title: 'newproj', sessionIds: [], createdAt: '', updatedAt: '' } as never, created: true } }
+  }
+
+  async createSession(workspaceId: string | undefined): Promise<Awaited<ReturnType<DshPort['createSession']>>> {
+    return { ok: true, value: { sessionId: 's-new' as never } }
+  }
+
   updateQueueCalls: Array<{ sessionId: string; itemId: string; action: unknown }> = []
   updateQueueResult: Awaited<ReturnType<DshPort['updateQueue']>> = { ok: true, value: { accepted: true } }
 
@@ -234,7 +243,7 @@ test('boot opens the project picker with All sessions first', async () => {
     workspace({ workspaceId: 'w2' as never, title: 'alpha' }),
   ]
   const { view } = await booted(port)
-  assert.deepEqual(view.projectPickerRows?.map((row) => row.title), ['All sessions', 'beta', 'alpha'])
+  assert.deepEqual(view.projectPickerRows?.map((row) => row.title), ['All sessions', 'beta', 'alpha', '＋ Create new project'])
   assert.equal(view.renders.at(-1)?.connection, 'connected')
 })
 
@@ -305,13 +314,14 @@ test('title fallback handles trailing-slash and Windows-style cwds', () => {
   assert.equal(sessionRows([], [win], [], 'all')[0]?.title, basename(windowsCwd))
 })
 
-test('empty project opens the session picker with no rows and never creates a session', async () => {
+test('empty project opens the session picker with only the create row', async () => {
   const port = new FakePort()
   port.workspaces = [workspace({ workspaceId: 'w1' as never, title: 'empty', sessionIds: ['s1' as never] })]
   port.sessions = [summary({ sessionId: 's1' as never, blank: true })]
   const { app, view } = await booted(port)
   await app.selectProject({ key: 'w1' as never, title: 'empty' })
-  assert.deepEqual(view.sessionPickerRows ?? [], [])
+  // The blank session stays hidden; the picker offers the create action.
+  assert.deepEqual(view.sessionPickerRows?.map((row) => row.title), ['＋ Create new session'])
   assert.equal(port.historyCalls.length, 0)
 })
 
@@ -534,7 +544,7 @@ test('sessions-list failure keeps the current rows and shows the safe error', as
   const last = view.renders.at(-1)
   assert.equal(last?.notice, 'boom')
   // The previously fetched projects remain selectable: retry is possible.
-  assert.deepEqual(view.projectPickerRows?.map((row) => row.title), ['All sessions', 'p'])
+  assert.deepEqual(view.projectPickerRows?.map((row) => row.title), ['All sessions', 'p', '＋ Create new project'])
 })
 
 test('shutdown is idempotent', async () => {
@@ -554,7 +564,7 @@ test('boot keeps the All sessions bucket when the first list refresh fails', asy
   const app = new App(port, view, abort.signal)
   const result = await app.boot()
   assert.equal(result.ok, true)
-  assert.deepEqual(view.projectPickerRows?.map((row) => row.title), ['All sessions'])
+  assert.deepEqual(view.projectPickerRows?.map((row) => row.title), ['All sessions', '＋ Create new project'])
   assert.equal(view.renders.at(-1)?.notice, 'boom')
 })
 
@@ -623,7 +633,7 @@ test('a superseded refresh cannot clobber newer rows or notices', async () => {
   await Promise.all([stale, newer])
   // The newer refresh's rows are what the picker shows.
   assert.ok(view.projectPickerRows !== undefined)
-  assert.equal(view.projectPickerRows?.length, 2) // All sessions + w1
+  assert.equal(view.projectPickerRows?.length, 3) // All sessions + w1 + create row
 })
 
 test('attach ignores a request made after shutdown', async () => {

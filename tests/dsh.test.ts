@@ -25,6 +25,7 @@ function stubClient(overrides: {
     },
     workspace: {
       list: async () => ok({ items: [], archivedSessionIds: [] }),
+      create: async () => ok({ workspace: { workspaceId: 'w1', path: '/tmp', title: 'w', sessionIds: [], createdAt: '', updatedAt: '' } as never, created: true }),
     },
     sessions: {
       list: async () => ok({ items: [] }),
@@ -33,6 +34,7 @@ function stubClient(overrides: {
       updateQueue: async () => ok({ accepted: true }),
       models: async () => ok({ current: { provider: 'p', model: 'm' }, routable: true, groups: [], failures: [] }),
       selectModel: async () => ok({ selected: { provider: 'p', model: 'm' } }),
+      create: async () => ok({ sessionId: 's1', agentPreset: undefined } as never),
     },
     respond: async () => ({ accepted: true }),
     events: {
@@ -401,4 +403,65 @@ test('createDshPort.listModels and selectModel send the session and fold errors'
   })
   await createDshPort(noEffort).selectModel('s1' as never, { provider: 'p', model: 'm2' })
   assert.deepEqual(seenNoEffort, { sessionId: 's1', provider: 'p', model: 'm2' })
+})
+
+test('createWorkspace maps workspace.create and never retries a transport throw', async () => {
+  let calls = 0
+  const client = stubClient({
+    workspace: {
+      create: async () => {
+        calls += 1
+        throw new Error('connection refused')
+      },
+    },
+  })
+  const port: DshPort = createDshPort(client)
+  const result = await port.createWorkspace('/tmp/newproj')
+  assert.equal(result.ok, false)
+  assert.equal(calls, 1, 'a write must not be retried')
+})
+
+test('createWorkspace passes the trimmed path through on success', async () => {
+  let payload: { path: string } | undefined
+  const client = stubClient({
+    workspace: {
+      create: async (request: { path: string }) => {
+        payload = request
+        return ok({ workspace: { workspaceId: 'w9', path: request.path, title: 'newproj', sessionIds: [], createdAt: '', updatedAt: '' } as never, created: true })
+      },
+    },
+  })
+  const port: DshPort = createDshPort(client)
+  const result = await port.createWorkspace('/tmp/newproj')
+  assert.deepEqual(payload, { path: '/tmp/newproj' })
+  assert.equal(result.ok, true)
+  if (result.ok) {
+    assert.equal(result.value.created, true)
+    assert.equal(result.value.workspace.workspaceId, 'w9')
+  }
+})
+
+test('createSession sends workspaceId when given, omits it for the host cwd, and never retries', async () => {
+  const payloads: Array<Record<string, unknown>> = []
+  let calls = 0
+  const client = stubClient({
+    sessions: {
+      create: async (request: Record<string, unknown>) => {
+        calls += 1
+        payloads.push(request)
+        return calls === 1
+          ? ok({ sessionId: 's9', agentPreset: undefined } as never)
+          : (() => { throw new Error('connection refused') })()
+      },
+    },
+  })
+  const port: DshPort = createDshPort(client)
+  const withProject = await port.createSession('w1' as never)
+  assert.equal(withProject.ok, true)
+  if (withProject.ok) assert.equal(withProject.value.sessionId, 's9')
+  assert.deepEqual(payloads[0], { workspaceId: 'w1' })
+  const noProject = await port.createSession(undefined)
+  assert.equal(noProject.ok, false)
+  assert.deepEqual(payloads[1], {})
+  assert.equal(calls, 2, 'the failed write was not retried')
 })

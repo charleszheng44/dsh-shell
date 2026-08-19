@@ -62,7 +62,10 @@ pnpm build
 
 Press `Ctrl+P` for the project selector, `Ctrl+S` for the session selector,
 `Enter` to send the editor's text to the attached session, and `Ctrl+C` to
-leave the application. Submitted text appears in the transcript only after
+leave the application. Both selectors end with a `＋ Create new` action:
+a project is created over an existing directory path (typed into the modal
+that follows), and a new session is created in the selected project and
+attached immediately. Submitted text appears in the transcript only after
 DSH logs it; a running session receives additional text through DSH's queue
 policy.
 
@@ -70,10 +73,10 @@ policy.
 
 - Only loopback `http:` hosts are accepted (`--host`, default
   `http://127.0.0.1:3080`); there is no authentication or TLS.
-- No session or workspace creation, rename, archive, deletion, search, fork,
-  model selection, or steering.
-- No approvals, questions, attachments, or automatic reconnect: losing the
-  stream shows a disconnected state and requires a restart.
+- No workspace/session rename, archive, deletion, search, fork, or
+  attachment support.
+- No automatic reconnect: losing the stream shows a disconnected state and
+  requires a restart.
 - Slash commands are rejected locally with a Web UI instruction.
 - The client pins the exact published DSH network-client version; an
   incompatible host fails loudly at `host.describe` before any selector

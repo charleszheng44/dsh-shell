@@ -22,15 +22,22 @@ import type { ModelReasoning, MuxFrame, QueuedInboxItem, RpcId, SessionModels } 
 import type { DshPort, HostDescription } from './dsh.js'
 import { applyEvent, projectEvents, type PartialAssistant, type TranscriptRow } from './transcript.js'
 
-/** A pickable project row: the special "All sessions" bucket or one Workspace. */
+/** Sentinel picker row: selecting it opens the create-project path input. */
+export const CREATE_PROJECT = '\u0000create-project'
+/** Sentinel picker row: selecting it creates a session in the current project. */
+export const CREATE_SESSION = '\u0000create-session'
+
+/** A pickable project row: the special "All sessions" bucket, one Workspace,
+ *  or the create-project action row. */
 export type ProjectRow = {
-  key: WorkspaceId | 'all'
+  key: WorkspaceId | 'all' | typeof CREATE_PROJECT
   title: string
 }
 
-/** A pickable session row for the current project filter. */
+/** A pickable session row for the current project filter (or the
+ *  create-session action row). */
 export interface SessionRow {
-  sessionId: SessionId
+  sessionId: SessionId | typeof CREATE_SESSION
   title: string
 }
 
@@ -145,6 +152,8 @@ export interface AppView {
   render(state: AppState): void
   openProjectPicker(rows: readonly ProjectRow[], onSelect: (row: ProjectRow) => void, onCancel: () => void): void
   openSessionPicker(rows: readonly SessionRow[], onSelect: (row: SessionRow) => void, onCancel: () => void): void
+  /** Modal path field for the create-project flow: Enter submits, ESC cancels. */
+  openCreateProjectInput(onSubmit: (path: string) => void, onCancel: () => void): void
   openModelPicker(choices: readonly ModelChoice[], onSelect: (choice: ModelChoice) => void, onCancel: () => void): void
   closePicker(): void
   stop(): void
@@ -697,13 +706,27 @@ export class App {
     approvals: readonly PendingApproval[]
   }>()
 
-  /** Ctrl+P: open the project picker (refreshes both lists first). */
+  /** Ctrl+P: open the project picker (refreshes both lists first). A
+   *  trailing create row opens the path-entry modal. */
   async openProjectPicker(): Promise<void> {
     const request = ++this.pickerRequest
     await this.refreshLists()
     if (this.closed || request !== this.pickerRequest) return
-    const rows = this.state.projects
-    this.view.openProjectPicker(rows, (row) => { void this.selectProject(row) }, () => this.view.closePicker())
+    const rows: readonly ProjectRow[] = [
+      ...this.state.projects,
+      { key: CREATE_PROJECT, title: '＋ Create new project' },
+    ]
+    this.view.openProjectPicker(rows, (row) => {
+      if (row.key === CREATE_PROJECT) {
+        // Path entry modal; ESC returns to the refreshed project picker.
+        this.view.openCreateProjectInput(
+          (path) => { void this.createProject(path) },
+          () => { void this.openProjectPicker() },
+        )
+        return
+      }
+      void this.selectProject(row)
+    }, () => this.view.closePicker())
   }
 
   /** Ctrl+S (or after a project pick): open the session picker for the current project. */
@@ -716,21 +739,72 @@ export class App {
       this.view.openProjectPicker(this.state.projects, (row) => { void this.selectProject(row) }, () => this.view.closePicker())
       return
     }
-    const rows = sessionRows(
-      this.rowsCache.workspaces,
-      this.rowsCache.sessions,
-      this.rowsCache.archived,
-      project,
-    )
-    this.view.openSessionPicker(rows, (row) => { void this.attach(row.sessionId) }, () => this.view.closePicker())
+    const rows: readonly SessionRow[] = [
+      ...sessionRows(
+        this.rowsCache.workspaces,
+        this.rowsCache.sessions,
+        this.rowsCache.archived,
+        project,
+      ),
+      { sessionId: CREATE_SESSION, title: '＋ Create new session' },
+    ]
+    this.view.openSessionPicker(rows, (row) => {
+      if (row.sessionId === CREATE_SESSION) {
+        void this.createSession()
+        return
+      }
+      void this.attach(row.sessionId)
+    }, () => this.view.closePicker())
   }
 
-  /** Remember the chosen project and immediately open its session picker. */
+  /** Remember the chosen project and immediately open its session picker.
+   *  The create-project row never reaches here (the picker branches on it). */
   async selectProject(row: ProjectRow): Promise<void> {
-    if (this.closed) return
+    if (this.closed || row.key === CREATE_PROJECT) return
     this.view.closePicker()
     this.setState({ selectedProject: row.key })
     await this.openSessionPicker()
+  }
+
+  /** Create a project over an existing directory, then open its session
+   *  picker. A write: never retried; a failure surfaces a notice and reopens
+   *  the (refreshed) project picker so the attempt can be redone or
+   *  abandoned. */
+  async createProject(path: string): Promise<void> {
+    if (this.closed) return
+    const trimmed = path.trim()
+    if (trimmed === '') return
+    const result = await this.port.createWorkspace(trimmed, this.signal)
+    if (this.closed) return
+    if (!result.ok) {
+      // Reopen first: the picker's own refresh clears stale notices, so the
+      // error is set after it to survive.
+      await this.openProjectPicker()
+      if (!this.closed) this.setState({ notice: `Create project failed: ${result.error.message}` })
+      return
+    }
+    this.setState({ selectedProject: result.value.workspace.workspaceId })
+    await this.openSessionPicker()
+  }
+
+  /** Create a session in the selected project — or the host cwd when the
+   *  picker was under All sessions — and attach to it immediately: the fresh
+   *  session starts blank and the composer is ready to prompt. */
+  async createSession(): Promise<void> {
+    if (this.closed) return
+    this.view.closePicker()
+    const project = this.state.selectedProject
+    const workspaceId = project === undefined || project === 'all' ? undefined : project
+    const result = await this.port.createSession(workspaceId, this.signal)
+    if (this.closed) return
+    if (!result.ok) {
+      // Reopen first: the picker's own refresh clears stale notices, so the
+      // error is set after it to survive.
+      await this.openSessionPicker()
+      if (!this.closed) this.setState({ notice: `Create session failed: ${result.error.message}` })
+      return
+    }
+    await this.attach(result.value.sessionId)
   }
 
   /** Attach to a session: load one tail history page and project it. */
@@ -765,15 +839,24 @@ export class App {
         // superseded reopen or a concurrent newer picker stays unclobbered.
         if (!this.closed && request === this.pickerRequest) {
           const project = this.state.selectedProject
-          const rows = project === undefined
+          const rows: readonly SessionRow[] = project === undefined
             ? []
-            : sessionRows(
-              this.rowsCache.workspaces,
-              this.rowsCache.sessions,
-              this.rowsCache.archived,
-              project,
-            )
-          this.view.openSessionPicker(rows, (row) => { void this.attach(row.sessionId) }, () => this.view.closePicker())
+            : [
+              ...sessionRows(
+                this.rowsCache.workspaces,
+                this.rowsCache.sessions,
+                this.rowsCache.archived,
+                project,
+              ),
+              { sessionId: CREATE_SESSION, title: '＋ Create new session' },
+            ]
+          this.view.openSessionPicker(rows, (row) => {
+            if (row.sessionId === CREATE_SESSION) {
+              void this.createSession()
+              return
+            }
+            void this.attach(row.sessionId)
+          }, () => this.view.closePicker())
           this.setState({ notice: 'Session no longer exists' })
         }
       } else {

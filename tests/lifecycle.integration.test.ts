@@ -275,13 +275,20 @@ function startQueueHost(): Promise<{
   respondBodies: Array<{ type: string; rpcId: string; result: unknown }>
   selectModelCalls: unknown[]
   promptCalls: unknown[]
+  createWorkspaceCalls: Array<{ path: string }>
+  createSessionCalls: Array<{ workspaceId?: string }>
   muxSend: (payload: unknown, rpcId?: string) => void
 }> {
   const updateQueueCalls: Array<{ sessionId: string; itemId: string; action: unknown }> = []
   const respondBodies: Array<{ type: string; rpcId: string; result: unknown }> = []
   const selectModelCalls: unknown[] = []
   const promptCalls: unknown[] = []
+  const createWorkspaceCalls: Array<{ path: string }> = []
+  const createSessionCalls: Array<{ workspaceId?: string }> = []
   const SID = 's1'
+  const workspaces = [
+    { workspaceId: 'w1', path: '/tmp', title: 'stub', sessionIds: [SID], createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' },
+  ]
   const queue = [
     { id: 'msg-1', placement: 'queued', message: { id: 'msg-1', role: 'user', content: [{ type: 'text', text: 'fix the parser' }], source: { kind: 'user' } } },
     { id: 'msg-2', placement: 'queued', message: { id: 'msg-2', role: 'user', content: [{ type: 'text', text: 'run the tests' }], source: { kind: 'user' } } },
@@ -323,8 +330,22 @@ function startQueueHost(): Promise<{
           value = { version: '0.0.1', cwd: '/tmp', attachedSessions: 0, canOpenPath: false }
           break
         case 'workspace.list':
-          value = { items: [{ workspaceId: 'w1', path: '/tmp', title: 'stub', sessionIds: [SID], createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' }], archivedSessionIds: [] }
+          value = { items: workspaces, archivedSessionIds: [] }
           break
+        case 'workspace.create': {
+          const path = (parsed.payload as { path?: string }).path ?? ''
+          createWorkspaceCalls.push({ path })
+          const created = { workspaceId: 'w2', path, title: path.split('/').filter(Boolean).at(-1) ?? 'newproj', sessionIds: [], createdAt: '2026-01-02T00:00:00.000Z', updatedAt: '2026-01-02T00:00:00.000Z' }
+          workspaces.push(created)
+          value = { workspace: created, created: true }
+          break
+        }
+        case 'session.create': {
+          const workspaceId = (parsed.payload as { workspaceId?: string }).workspaceId
+          createSessionCalls.push({ ...(workspaceId === undefined ? {} : { workspaceId }) })
+          value = { sessionId: 's2', agentPreset: undefined }
+          break
+        }
         case 'session.list':
           value = { items: [{ sessionId: SID, updatedAt: 0, running: false, blank: false, projections: { asOfSeq: 1, values: {
             title: 'stub session',
@@ -332,7 +353,11 @@ function startQueueHost(): Promise<{
             contextPressure: { pressureTokens: 90000, contextWindow: 200000 },
           } } }] }
           break
-        case 'session.history':
+        case 'session.history': {
+          if ((parsed.payload as { sessionId?: string }).sessionId === 's2') {
+            value = { events: [], hasMore: false }
+            break
+          }
           value = { events: [
             { event: { type: 'user/message', seq: 1, time: 0, surfaceOp: 'append', data: { id: 'm1', role: 'user', content: [{ type: 'text', text: 'hello' }], source: { kind: 'user' } } } },
             { event: { type: 'assistant/message', seq: 2, time: 0, surfaceOp: 'append', data: { turn: 0, step: 0, message: { id: 'a1', role: 'assistant', content: [
@@ -341,6 +366,7 @@ function startQueueHost(): Promise<{
             ], source: { kind: 'model', provider: 'p' } } } } },
           ], hasMore: false }
           break
+        }
         case 'session.updateQueue': {
           const itemId = parsed.payload?.itemId ?? ''
           const action = parsed.payload?.action
@@ -456,7 +482,7 @@ function startQueueHost(): Promise<{
       // Resolve a wrapper, not the value: the upgrade handler assigns the
       // real sender only after the child CLI connects, so a captured value
       // here would be the no-op initializer.
-      resolve({ server, origin: `http://127.0.0.1:${address.port}`, updateQueueCalls, respondBodies, selectModelCalls, promptCalls, muxSend: (payload, rpcId) => muxSend(payload, rpcId) })
+      resolve({ server, origin: `http://127.0.0.1:${address.port}`, updateQueueCalls, respondBodies, selectModelCalls, promptCalls, createWorkspaceCalls, createSessionCalls, muxSend: (payload, rpcId) => muxSend(payload, rpcId) })
     })
   })
 }
@@ -714,6 +740,52 @@ test('Ctrl+U pops the last queued message into the composer end to end', async (
   } finally {
     // A failed assertion must not strand the spawned CLI on the stub's
     // keep-alive connections (which would also wedge server.close()).
+    child?.kill()
+    server.close()
+  }
+})
+
+test('create a project and a session end to end', async () => {
+  const { server, origin, createWorkspaceCalls, createSessionCalls } = await startQueueHost()
+  let child: ChildProcess | undefined
+  try {
+    const spawned = runCli(['--host', origin])
+    child = spawned.child
+    const { done } = spawned
+    const stdoutRef = { value: '' }
+    child.stdout?.on('data', (chunk: Buffer) => { stdoutRef.value += chunk.toString() })
+    await waitForConnected(child, stdoutRef)
+    await waitForStdout(stdoutRef, 'Select project')
+    await waitForStdout(stdoutRef, '＋ Create new project')
+    child.stdin?.write('\u001b[B\u001b[B\r')
+    await waitForStdout(stdoutRef, 'Create project — directory path')
+    child.stdin?.write('/tmp/newproj')
+    child.stdin?.write('\r')
+    await waitFor(() => createWorkspaceCalls.length === 1, 'workspace.create call')
+    assert.deepEqual(createWorkspaceCalls[0], { path: '/tmp/newproj' })
+    await waitForStdout(stdoutRef, 'Select session')
+    await waitForStdout(stdoutRef, '＋ Create new session')
+    child.stdin?.write('\r')
+    await waitFor(() => createSessionCalls.length === 1, 'session.create call')
+    assert.deepEqual(createSessionCalls[0], { workspaceId: 'w2' })
+    await waitForStdout(stdoutRef, 'newproj / s2 / connected')
+    child.stdin?.write('\u0010') // Ctrl+P
+    await waitForStdout(stdoutRef, 'Select project')
+    child.stdin?.write('\u001b[B\u001b[B\r')
+    await waitForStdout(stdoutRef, 'Create project — directory path')
+    child.stdin?.write('\u001b') // ESC
+    // ESC must flush alone before the next write: the reopened picker's
+    // 'Select project' text is stale in the accumulated stdout, so waiting
+    // for it cannot pace the writes, and a Ctrl+C sent inside pi's escape
+    // reassembly window would merge with the ESC into a meta-key sequence
+    // the app never matches.
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    assert.equal(createWorkspaceCalls.length, 1, 'ESC cancels without a write')
+    child.stdin?.write('\u0003') // Ctrl+C
+    const result = await done
+    assert.equal(result.code, 0)
+    assert.equal(result.restored, true)
+  } finally {
     child?.kill()
     server.close()
   }

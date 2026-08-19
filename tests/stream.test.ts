@@ -32,6 +32,7 @@ class FakeView implements AppView {
     this.sessionPickerRows = rows
   }
 
+  openCreateProjectInput(): void {}
   closePicker(): void {
     this.projectPickerRows = undefined
     this.sessionPickerRows = undefined
@@ -118,6 +119,14 @@ class FakePort implements DshPort {
   async selectModel(sessionId: string, selection: unknown): Promise<Awaited<ReturnType<DshPort['selectModel']>>> {
     this.selectModelCalls.push({ sessionId: String(sessionId), selection })
     return this.selectModelResult
+  }
+
+  async createWorkspace(path: string): Promise<Awaited<ReturnType<DshPort['createWorkspace']>>> {
+    return { ok: true, value: { workspace: { workspaceId: 'w-new' as never, path, title: 'newproj', sessionIds: [], createdAt: '', updatedAt: '' } as never, created: true } }
+  }
+
+  async createSession(workspaceId: string | undefined): Promise<Awaited<ReturnType<DshPort['createSession']>>> {
+    return { ok: true, value: { sessionId: 's-new' as never } }
   }
 
   updateQueueCalls: Array<{ sessionId: string; itemId: string; action: unknown }> = []

@@ -13,6 +13,7 @@ import {
   Container,
   Editor,
   HStack,
+  Input,
   Markdown,
   matchesKey,
   visibleWidth,
@@ -957,8 +958,9 @@ export class TerminalView implements AppView {
   openSessionPicker(rows: readonly SessionRow[], onSelect: (row: SessionRow) => void, onCancel: () => void): void {
     const items = sessionPickerItems(rows)
     if (rows.length === 0) {
-      // Design: an empty project remains selectable and shows a notice; it
-      // never creates a session, and Enter on the notice just closes.
+      // Defensive: the app always appends the create-session row, so a live
+      // picker never reaches this branch; an empty project shows only the
+      // create action.
       this.showPicker(items, pickerTitleStyle('Select session'), () => undefined, onCancel)
       return
     }
@@ -966,6 +968,31 @@ export class TerminalView implements AppView {
       const row = rows.find((candidate) => String(candidate.sessionId) === item.value)
       if (row !== undefined) onSelect(row)
     }, onCancel)
+  }
+
+  /** Modal path field for the create-project flow. Enter submits, ESC
+   *  returns to the project picker (the app reopens it). The Input renders
+   *  its own static inverse-video cursor cell — a dialog cursor, which the
+   *  composer's blink strip deliberately leaves alone. */
+  openCreateProjectInput(onSubmit: (path: string) => void, onCancel: () => void): void {
+    this.closePicker()
+    const frame = new PickerFrame(pickerTitleStyle('Create project — directory path'), pickerPanelStyle)
+    const input = new Input()
+    input.onSubmit = (value) => {
+      this.closePicker()
+      onSubmit(value)
+    }
+    input.onEscape = () => {
+      this.closePicker()
+      onCancel()
+    }
+    frame.addChild(input)
+    frame.addChild(new Text(footerStyle('Enter an existing directory path · ESC cancels'), 1, 0))
+    this.overlay = this.tui.showOverlay(frame, {
+      width: '60%',
+      maxHeight: '50%',
+      anchor: 'center',
+    })
   }
 
   private showPicker(items: SelectItem[], title: string, onSelect: (item: SelectItem) => void, onCancel: () => void): void {
