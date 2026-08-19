@@ -188,6 +188,16 @@ export const toolTitleStyle = (text: string): string => bold(mistText(text))
 /** Tool output: the reference's subtle blue-gray (muted). */
 export const toolOutputStyle = (text: string): string => mistSubtle(text)
 
+/** Tool result text: neutral light grey, Codex-style — the reference's
+ *  blue-gray (#5e6673) has green above red and can read as greenish-grey on
+ *  the canvas; the output block should be grey on grey. */
+export const toolResultStyle = (text: string): string => fgHex('#b0b0b0')(text)
+
+/** Composer box border: the reference's accent blue, drawn as full-width
+ *  rules above and below the editor (the editor blanks its own border rows
+ *  so the "> " prefix cannot open the box at the left). */
+export const composerBorderStyle = (text: string): string => mistAccentBlue(text)
+
 /** Working status ("Deep diving...", the reference's mist brand blue, bold). */
 export const workingStyle = (text: string): string => bold(mistBlue(text))
 
@@ -270,10 +280,13 @@ export const markdownTheme: MarkdownTheme = {
   underline,
 }
 
-/** Editor (mist accent border) and the picker SelectList (mist selection,
- *  dim descriptions and scroll info). */
+/** Editor (no visible box — the composer draws full-width border rules
+ *  around it, so its own border rows are blanked; the editor's ↑/↓
+ *  scroll cues also flow through borderColor and are dropped with them,
+ *  an accepted tradeoff) and the picker SelectList (mist selection, dim
+ *  descriptions and scroll info). */
 export const editorTheme: EditorTheme = {
-  borderColor: mistAccentBlue,
+  borderColor: () => '',
   selectList: {
     // pi 0.84.2 declares selectedPrefix but renders a hardcoded "→ " prefix;
     // the key is required by the theme type, so provide the styled form for

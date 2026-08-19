@@ -31,6 +31,7 @@ import { queuedItemText, type AppState, type AppView, type ProjectRow, type Ques
 import { partialSegments, type AssistantSegment, type TranscriptRow } from './transcript.js'
 import {
   assistantMarker,
+  composerBorderStyle,
   contextStyle,
   editorTheme,
   footerStyle,
@@ -45,6 +46,7 @@ import {
   toolErrorBoxBg,
   toolOutputStyle,
   toolResultBoxBg,
+  toolResultStyle,
   toolTitleStyle,
   userBubbleBg,
   userMarker,
@@ -413,7 +415,7 @@ function rowComponent(row: TranscriptRow): Component {
   if (row.kind === 'toolResult') {
     const box = new Box(1, 1, row.error ? toolErrorBoxBg : toolResultBoxBg)
     const mark = row.error ? toolDotStyle(row.name, true)('✗ ') : ''
-    box.addChild(new Text(`${mark}${toolOutputStyle(terminalSafeText(toolPreviewText(row.output, row.truncated)))}`, 0, 0))
+    box.addChild(new Text(`${mark}${toolResultStyle(terminalSafeText(toolPreviewText(row.output, row.truncated)))}`, 0, 0))
     return box
   }
   return new HStack([
@@ -440,6 +442,21 @@ export function toolPreviewText(output: string, truncated: boolean): string {
   return truncated
     ? `${preview.join('\n')}\n… +${remaining} more lines (output truncated)`
     : `${preview.join('\n')}\n… +${remaining} more lines`
+}
+
+/** Full-width horizontal rule for the composer box: pi's Text wraps long
+ *  content, so a custom component repeats the border glyph to the allocated
+ *  width. */
+class Rule implements Component {
+  constructor(private readonly style: (text: string) => string) {}
+
+  invalidate(): void {
+    // Static glyph: nothing to invalidate.
+  }
+
+  render(width: number): string[] {
+    return [this.style('─'.repeat(Math.max(1, Math.floor(width))))]
+  }
 }
 
 /** Terminal view: owns the Pi TUI, renders AppState, and shows pickers. */
@@ -504,15 +521,19 @@ export class TerminalView implements AppView {
     // Codex-style composer: a "> " prompt prefix leads the input line; the
     // editor takes the remaining width (pi computes the hardware cursor
     // column from the marker's position in the composed row, so the prefix
-    // shifts it correctly). pi's Editor renders a bordered box (top border,
-    // buffer lines, bottom border), so the prefix leads with a blank line
+    // shifts it correctly). The editor's own border rows are blanked
+    // (editorTheme), and full-width rules above and below draw the box, so
+    // the top and bottom lines reach the left border instead of being
+    // opened by the prefix's blank rows. The prefix leads with a blank line
     // and top-aligns: '> ' always sits on the first buffer line, whatever
     // the buffer height.
     const editorRow = new VStack([
+      new Rule(composerBorderStyle),
       new HStack([
         { component: new Text(`\n${promptStyle('> ')}`, 0, 0), basis: 2, grow: 0 },
         { component: this.editor, basis: 0, grow: 1 },
       ], { align: 'start' }),
+      new Rule(composerBorderStyle),
       footer,
     ])
     this.tui.setLayoutRoot(

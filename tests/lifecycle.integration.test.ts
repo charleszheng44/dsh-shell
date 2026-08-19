@@ -448,7 +448,13 @@ test('Ctrl+U pops the last queued message into the composer end to end', async (
         const last = lastWrite(row)
         return last.includes('fix the parser') && !last.includes('↳ run the tests')
       })
-      return editorRestored && panelFinal
+      const borderAtLeft = rows.some((row) => {
+        // The composer's border rules run from column 0 (the old layout's
+        // prefix blank rows left the box open at the left).
+        const last = lastWrite(row)
+        return /^\x1b\[[0-9;]*m─{3,}/.test(last)
+      })
+      return editorRestored && panelFinal && borderAtLeft
     }, 'panel shrink and composer restore')
     // With the editor focused, pi's frame ends show the hardware cursor.
     assert.ok(stdoutRef.value.includes('\x1b[?25h'), 'hardware cursor is shown while focused')
