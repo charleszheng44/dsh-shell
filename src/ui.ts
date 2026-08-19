@@ -798,7 +798,7 @@ export class TerminalView implements AppView {
       ? footerStyle('↑↓ move · Enter select · ESC cancel')
       : connected
         ? footerHints(state.attachment)
-        : footerStyle('Ctrl+P project  Ctrl+S session  Ctrl+C quit\nApprovals and questions: use Web UI'))
+        : footerStyle('Ctrl+P project  Ctrl+S session  Ctrl+C quit'))
     this.renderTranscript(state.attachment, connected)
     const policy = editorPolicy(state, this.overlay !== undefined)
     this.editorEnabled = policy.enabled
@@ -1161,7 +1161,7 @@ export function footerHints(attachment: AppState['attachment']): string {
     ? 'Ctrl+A allow once · Ctrl+R reject · Enter send · ↑ history'
     : question
       ? 'Answer: a number picks an option, commas pick several, any text answers'
-      : 'Enter send · ↑ history · Approvals and questions: use Web UI'
+      : 'Enter send · ↑ history · Approvals: Ctrl+A allow · Ctrl+R reject'
   return footerStyle(`${keys}\n${mode}`)
 }
 

@@ -275,6 +275,7 @@ function startQueueHost(): Promise<{
   respondBodies: Array<{ type: string; rpcId: string; result: unknown }>
   selectModelCalls: unknown[]
   promptCalls: unknown[]
+  muxSend: (payload: unknown, rpcId?: string) => void
 }> {
   const updateQueueCalls: Array<{ sessionId: string; itemId: string; action: unknown }> = []
   const respondBodies: Array<{ type: string; rpcId: string; result: unknown }> = []
@@ -298,8 +299,9 @@ function startQueueHost(): Promise<{
         respondBodies.push(message)
         res.writeHead(200, { 'content-type': 'application/json' })
         res.end(JSON.stringify({ accepted: true }))
-        // Settle the approval so the card clears.
+        // Settle the asks so the cards clear.
         muxSend({ type: 'approval/resolved', sessionId: SID, approvalId: 'appr-e2e', outcome: 'allowed-once' })
+        muxSend({ type: 'question/resolved', sessionId: SID, questionRpcId: 'rpc-question-1', outcome: 'answered' })
         return
       }
       let parsed: { method?: string; rpcId?: string; payload?: { sessionId?: string; itemId?: string; action?: unknown; provider?: string; model?: string } } = {}
@@ -441,7 +443,10 @@ function startQueueHost(): Promise<{
   return new Promise((resolve) => {
     server.listen(0, '127.0.0.1', () => {
       const address = server.address() as AddressInfo
-      resolve({ server, origin: `http://127.0.0.1:${address.port}`, updateQueueCalls, respondBodies, selectModelCalls, promptCalls })
+      // Resolve a wrapper, not the value: the upgrade handler assigns the
+      // real sender only after the child CLI connects, so a captured value
+      // here would be the no-op initializer.
+      resolve({ server, origin: `http://127.0.0.1:${address.port}`, updateQueueCalls, respondBodies, selectModelCalls, promptCalls, muxSend: (payload, rpcId) => muxSend(payload, rpcId) })
     })
   })
 }
@@ -457,7 +462,7 @@ async function waitFor(predicate: () => boolean, label: string, timeoutMs = 5000
 }
 
 test('Ctrl+U pops the last queued message into the composer end to end', async () => {
-  const { server, origin, updateQueueCalls, respondBodies, selectModelCalls, promptCalls } = await startQueueHost()
+  const { server, origin, updateQueueCalls, respondBodies, selectModelCalls, promptCalls, muxSend } = await startQueueHost()
   let child: ChildProcess | undefined
   try {
     const spawned = runCli(['--host', origin])
@@ -630,6 +635,26 @@ test('Ctrl+U pops the last queued message into the composer end to end', async (
     assert.deepEqual(approval?.result, {
       ok: true,
       value: { sessionId: 's1', approvalId: 'appr-e2e', outcome: 'allowed-once' },
+    })
+    // The host's question ask renders as a card; answering '1' picks the
+    // first option and echoes the request's rpcId on /api/respond. The
+    // frame is pushed only now: while a question is open the composer
+    // answers it, so queue editing is gated and the earlier steps must run
+    // with none pending.
+    muxSend({
+      type: 'question/requested',
+      sessionId: 's1',
+      questions: [{ id: 'qa', question: 'Approve the change?', options: [{ label: 'Yes' }, { label: 'No' }] }],
+    }, 'rpc-question-1')
+    await waitForStdout(stdoutRef, 'Approve the change?')
+    child.stdin?.write('1')
+    child.stdin?.write('\r')
+    await waitFor(() => respondBodies.length === 2, 'question response')
+    const question = respondBodies[1]
+    assert.equal(question?.rpcId, 'rpc-question-1')
+    assert.deepEqual(question?.result, {
+      ok: true,
+      value: { sessionId: 's1', answer: { answers: [{ id: 'qa', selected: ['Yes'] }] } },
     })
     // The software blink must cycle on -> off -> on: only the 530ms timer
     // can hide the cursor again after a focused frame showed it. Poll so a
