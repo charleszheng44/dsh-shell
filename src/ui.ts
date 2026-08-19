@@ -38,8 +38,8 @@ import {
   markdownTheme,
   pickerPanelStyle,
   pickerTitleStyle,
+  promptStyle,
   questionBoxBg,
-  toolBoxBg,
   toolDisplayName,
   toolDotStyle,
   toolErrorBoxBg,
@@ -382,12 +382,13 @@ const TOOL_OUTPUT_PREVIEW_LINES = 10
 /** One transcript line component. User prompts render as the reference's
  *  pointer-in-bubble (subtle chevron, warm off-white text on the mist
  *  bubble); assistant text as a mist-blue block plus plain Markdown; tool
- *  calls and results as boxed blocks (category dot, capitalized name,
- *  parenthesized args, bounded output). The assistant marker lives in its
- *  own column so it never interferes with Markdown parsing — a leading code
- *  fence must still be detected — while user and tool rows are full-width.
- *  Tool names, arguments, and outputs are host- or model-controlled text, so
- *  they pass through terminalSafeText like every other DSH-derived string. */
+ *  call headers as plain lines and tool results as boxed blocks (category
+ *  dot, capitalized name, parenthesized args, bounded output). The
+ *  assistant marker lives in its own column so it never interferes with
+ *  Markdown parsing — a leading code fence must still be detected — while
+ *  user and tool rows are full-width. Tool names, arguments, and outputs
+ *  are host- or model-controlled text, so they pass through
+ *  terminalSafeText like every other DSH-derived string. */
 function rowComponent(row: TranscriptRow): Component {
   if (row.kind === 'user') {
     // The reference's user prompt: `❯ text` inside the bubble, pointer in
@@ -398,18 +399,16 @@ function rowComponent(row: TranscriptRow): Component {
     return bubble
   }
   if (row.kind === 'toolCall') {
-    // Title and args compose into ONE Text: pi's HStack inserts a full reset
-    // between stacked children, which would kill the box background for the
-    // args, so the segments are joined here with attribute-specific resets.
-    // The category status dot and the reference's capitalized display name
-    // lead the row.
-    const box = new Box(1, 1, toolBoxBg)
+    // Codex-style call header: the dot, display name, and parenthesized
+    // arguments render as plain text on the default background (no card),
+    // so only the result carries the grey canvas. The segments compose
+    // into ONE Text with attribute-specific resets so no style bleeds
+    // across the row.
     const dot = toolDotStyle(row.name, false)('• ')
     const title = toolTitleStyle(terminalSafeText(toolDisplayName(row.name)))
     // The reference's call header parenthesizes the arguments.
     const args = row.args === undefined ? '' : ` (${toolOutputStyle(terminalSafeText(row.args))})`
-    box.addChild(new Text(`${dot}${title}${args}`, 0, 0))
-    return box
+    return new Text(`${dot}${title}${args}`, 0, 0)
   }
   if (row.kind === 'toolResult') {
     const box = new Box(1, 1, row.error ? toolErrorBoxBg : toolResultBoxBg)
@@ -446,7 +445,11 @@ export function toolPreviewText(output: string, truncated: boolean): string {
 /** Terminal view: owns the Pi TUI, renders AppState, and shows pickers. */
 export class TerminalView implements AppView {
   private readonly terminal = new ProcessTerminal()
-  private readonly tui = new TuiAltScreen(this.terminal)
+  // pi hides the hardware cursor by default and renders a static fake block
+  // instead; passing true shows the real cursor (positioned at the editor's
+  // marker every frame), which the DECSCUSR 0 write in start() makes blink —
+  // the Codex-style cursor.
+  private readonly tui = new TuiAltScreen(this.terminal, true)
   private readonly transcript = new TranscriptList()
   private readonly partial = new Markdown('', 1, 0, markdownTheme)
   private readonly partialRow = new HStack([
@@ -498,8 +501,18 @@ export class TerminalView implements AppView {
       primary: true,
       overscroll: 'chain',
     })
+    // Codex-style composer: a "> " prompt prefix leads the input line; the
+    // editor takes the remaining width (pi computes the hardware cursor
+    // column from the marker's position in the composed row, so the prefix
+    // shifts it correctly). pi's Editor renders a bordered box (top border,
+    // buffer lines, bottom border), so the prefix leads with a blank line
+    // and top-aligns: '> ' always sits on the first buffer line, whatever
+    // the buffer height.
     const editorRow = new VStack([
-      this.editor,
+      new HStack([
+        { component: new Text(`\n${promptStyle('> ')}`, 0, 0), basis: 2, grow: 0 },
+        { component: this.editor, basis: 0, grow: 1 },
+      ], { align: 'start' }),
       footer,
     ])
     this.tui.setLayoutRoot(
@@ -600,6 +613,10 @@ export class TerminalView implements AppView {
     // attached session enables input.
     this.tui.setFocus(null)
     this.tui.start()
+    // Codex-style cursor: DECSCUSR 0 is the blinking block. pi positions
+    // the hardware cursor but never styles it, so the blink is set here for
+    // the whole TUI session and restored on stop.
+    this.terminal.write('\x1b[0 q')
   }
 
   private editorEnabled = false
@@ -753,6 +770,9 @@ export class TerminalView implements AppView {
       this.workingTimer = undefined
     }
     this.tui.stop()
+    // Restore the terminal's default cursor style (blinking block) on the
+    // main screen; the alt-screen exit does not reset DECSCUSR.
+    this.terminal.write('\x1b[0 q')
   }
 
 }

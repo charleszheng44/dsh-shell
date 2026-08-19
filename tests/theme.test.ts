@@ -7,7 +7,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { to256, questionBoxBg, toolBoxBg, toolDisplayName, toolDotStyle, toolErrorBoxBg, toolOutputStyle, toolResultBoxBg, toolTitleStyle, userBubbleBg, userStyle } from '../src/theme.js'
+import { to256, promptStyle, questionBoxBg, toolDisplayName, toolDotStyle, toolErrorBoxBg, toolOutputStyle, toolResultBoxBg, toolTitleStyle, userBubbleBg, userStyle } from '../src/theme.js'
 
 test('theme resets are attribute-specific so box backgrounds survive', () => {
   // pi's Box wraps each padded row in the background style; a full \x1b[0m
@@ -17,7 +17,6 @@ test('theme resets are attribute-specific so box backgrounds survive', () => {
   // assert the structure (set code + matching reset) instead of exact bytes.
   const bubble = userBubbleBg('x')
   assert.ok(bubble.startsWith('\x1b[48;') && bubble.endsWith('\x1b[49m'), bubble)
-  assert.equal(toolBoxBg('x').endsWith('\x1b[49m'), true)
   const output = toolOutputStyle('x')
   assert.ok(output.startsWith('\x1b[38;') && output.endsWith('\x1b[39m'), output)
   // Foreground styles reset only the foreground, in either color mode.
@@ -25,8 +24,11 @@ test('theme resets are attribute-specific so box backgrounds survive', () => {
   assert.ok(user.startsWith('\x1b[38;') && user.endsWith('\x1b[39m'), user)
   const title = toolTitleStyle('x')
   assert.ok(title.includes('\x1b[39m') && title.endsWith('\x1b[22m'), title)
+  // The composer prompt is a foreground style with only its attribute reset.
+  const prompt = promptStyle('> ')
+  assert.ok(prompt.startsWith('\x1b[38;') && prompt.endsWith('\x1b[39m'), prompt)
   // No full reset may appear anywhere in a styled token.
-  for (const style of [userBubbleBg, toolBoxBg, toolOutputStyle, userStyle, toolTitleStyle]) {
+  for (const style of [userBubbleBg, promptStyle, toolOutputStyle, userStyle, toolTitleStyle]) {
     assert.ok(!style('x').includes('\x1b[0m'), 'style must not contain a full reset')
   }
 })
@@ -49,7 +51,6 @@ test('the 256-color fallbacks are distinct and brightness-ordered', () => {
     if (match !== null) assert.equal(Number(match[1]), expected, out)
     else assert.ok(out.startsWith('\x1b[48;2;'), out)
   }
-  fallback(toolBoxBg, 235)
   fallback(userBubbleBg, 236)
   fallback(toolResultBoxBg, 237)
   fallback(toolErrorBoxBg, 238)
@@ -79,8 +80,8 @@ test('to256 gray ramp picks the nearest step and never exceeds 255', () => {
   assert.equal(to256([0xe8, 0xe6, 0xe0]), 254)
   // #292d36 (mean 46) -> gray 236 (step 48).
   assert.equal(to256([0x29, 0x2d, 0x36]), 236)
-  // #242b3a (mean 45) -> gray 236.
-  assert.equal(to256([0x24, 0x2b, 0x3a]), 236)
+  // #3a3a3a (mean 58) -> gray 237.
+  assert.equal(to256([0x3a, 0x3a, 0x3a]), 237)
   // Near-white grays clamp to the last ramp step (255) instead of 256.
   assert.equal(to256([0xec, 0xec, 0xec]), 255)
   // Pure white and black are exact cube cells (231, 16) — the cube branch wins
@@ -88,7 +89,7 @@ test('to256 gray ramp picks the nearest step and never exceeds 255', () => {
   assert.equal(to256([0xff, 0xff, 0xff]), 231)
   assert.equal(to256([0, 0, 0]), 16)
   // Every palette gray stays within the valid SGR range.
-  for (const hex of [0x292d36, 0x242b3a, 0x2b352c, 0x362b2c, 0x30353d, 0x5e6673, 0x8d95a6, 0xe8e6e0]) {
+  for (const hex of [0x292d36, 0x3a3a3a, 0x362b2c, 0x30353d, 0x5e6673, 0x8d95a6, 0xe8e6e0]) {
     const index = to256([(hex >> 16) & 0xff, (hex >> 8) & 0xff, hex & 0xff])
     assert.ok(index >= 16 && index <= 255, `index ${index} out of range for #${hex.toString(16)}`)
   }

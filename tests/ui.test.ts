@@ -647,12 +647,14 @@ test('reconcileRows removes dropped components when the transcript shrinks', () 
   assert.equal(container.children.length, 0)
 })
 
-test('tool rows render boxed with a background that spans every line', () => {
-  // pi's stack compositing inserts full resets between children, so the
-  // toolCall title+args must compose inside one Text: every rendered line of
-  // the box must carry the background from its start through its padding
-  // with no full reset in between (regression: the with-args tool box lost
-  // its background after the title).
+test('tool rows render the call header plain and the result boxed', () => {
+  // Codex-style: the toolCall header ("• RunCode (...)") is plain text on
+  // the default background — only the result gets the grey canvas. The
+  // toolCall title+args must compose inside one Text (pi's stack
+  // compositing inserts full resets between children, which would break
+  // styling mid-row); every rendered line of the result boxes must carry
+  // the background with no full reset in between (regression: the
+  // with-args tool box lost its background after the title).
   const container = new Container()
   const cache: Array<{ row: TranscriptRow; component: unknown }> = []
   const rows = [
@@ -668,24 +670,24 @@ test('tool rows render boxed with a background that spans every line', () => {
   const userBody = userLines.join('\n')
   assert.ok(userBody.includes('❯'), 'user bubble contains the pointer')
   assert.ok(!userBody.includes('\x1b[0m'), 'no full reset inside the user bubble')
-  const boxed = container.children.slice(1, 4) as Array<{ render(width: number): string[] }>
-  // Tool rows carry the category dot, the capitalized display name, and the
-  // rose cross on failures.
-  const callLines = boxed[0]?.render(60).join('\n') ?? ''
+  const rows2 = container.children.slice(1, 4) as Array<{ render(width: number): string[] }>
+  // The tool call header is transparent: one plain line, no background.
+  const callLines = rows2[0]?.render(60).join('\n') ?? ''
   assert.ok(callLines.includes('•') && callLines.includes('RunCode'), callLines)
   assert.ok(callLines.includes('('), 'args are parenthesized')
-  const errLines = boxed[2]?.render(60).join('\n') ?? ''
+  assert.ok(!callLines.includes('\x1b[48;'), 'the call header has no background')
+  assert.equal(callLines.split('\n').length, 1, 'the call header is one plain line')
+  // Failed results lead with the rose cross.
+  const errLines = rows2[2]?.render(60).join('\n') ?? ''
   assert.ok(errLines.includes('✗'), 'failed results lead with the rose cross')
-  // The error result uses the error tint, whatever the terminal's color mode:
-  // its background SGR must differ from the success box's.
-  // boxed = [toolCall, success result, error result]; the tint assertion
-  // must compare the success and error RESULT boxes.
-  const successLines = boxed[1]?.render(30) ?? []
-  const errorLines = boxed[2]?.render(30) ?? []
+  // The error result uses the error tint, whatever the terminal's color
+  // mode: its background SGR must differ from the success box's.
+  const successLines = rows2[1]?.render(30) ?? []
+  const errorLines = rows2[2]?.render(30) ?? []
   const firstSgr = (line: string | undefined): string => line === undefined ? '' : line.slice(0, line.indexOf('m') + 1)
   assert.notEqual(firstSgr(errorLines[1]), firstSgr(successLines[1]), 'error box uses a different background')
   assert.ok(firstSgr(errorLines[1]).startsWith('\x1b[48;'), 'error box has a background')
-  for (const child of boxed) {
+  for (const child of rows2.slice(1)) {
     const lines = child.render(40)
     assert.ok(lines.length >= 2, 'boxed rows have padding lines')
     for (const line of lines) {

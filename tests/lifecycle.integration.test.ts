@@ -417,6 +417,10 @@ test('Ctrl+U pops the last queued message into the composer end to end', async (
     await waitForStdout(stdoutRef, 'Queued follow-up inputs')
     await waitForStdout(stdoutRef, '↳ run the tests')
     assert.equal(updateQueueCalls.length, 0)
+    // The Codex-style cursor: DECSCUSR 0 (blinking block) at start, and the
+    // hardware cursor is shown (pi hides it by default; TuiAltScreen was
+    // constructed with showHardwareCursor=true).
+    assert.ok(stdoutRef.value.includes('\x1b[0 q'), 'DECSCUSR blinking block emitted at start')
     child.stdin?.write('\u0015') // Ctrl+U
     // The host sees the remove for the LAST queued item.
     await waitFor(() => updateQueueCalls.length === 1, 'updateQueue call')
@@ -437,7 +441,8 @@ test('Ctrl+U pops the last queued message into the composer end to end', async (
       const rows = stdoutRef.value.replace(/\x1b\[\d+;\d*H/g, '\n').split('\n')
       const editorRestored = rows.some((row) => {
         const last = lastWrite(row)
-        return last.includes('run the tests') && !last.includes('↳')
+        // The composer row carries the Codex-style "> " prompt prefix.
+        return last.includes('> ') && last.includes('run the tests') && !last.includes('↳')
       })
       const panelFinal = rows.some((row) => {
         const last = lastWrite(row)
@@ -445,10 +450,15 @@ test('Ctrl+U pops the last queued message into the composer end to end', async (
       })
       return editorRestored && panelFinal
     }, 'panel shrink and composer restore')
+    // With the editor focused, pi's frame ends show the hardware cursor.
+    assert.ok(stdoutRef.value.includes('\x1b[?25h'), 'hardware cursor is shown while focused')
     child.stdin?.write('\u0003') // Ctrl+C
     const result = await done
     assert.equal(result.code, 0)
     assert.equal(result.restored, true)
+    // stop() re-applies DECSCUSR 0 after the alt-screen exit: the child's
+    // stdout through exit carries two writes (start + stop).
+    assert.ok((result.stdout.match(/\x1b\[0 q/g) ?? []).length >= 2, 'cursor style restored at stop')
   } finally {
     // A failed assertion must not strand the spawned CLI on the stub's
     // keep-alive connections (which would also wedge server.close()).

@@ -134,6 +134,10 @@ export function userMarker(): string {
   return mistSubtle('❯ ')
 }
 
+/** Composer prompt: Codex's "> " prefix in the subtle gray, leading the
+ *  input line. */
+export const promptStyle = (text: string): string => mistSubtle(text)
+
 /** Assistant response marker: a mist-blue block that prefixes model rows and
  *  the in-flight partial, chat-style. Rendered in its own component so it
  *  never interferes with Markdown parsing (e.g. a leading code fence). */
@@ -153,32 +157,25 @@ export function contextStyle(percent: number, text: string): string {
   return dim(text)
 }
 
-/** Picker panel background: the 256-color index 236 (the nearest step for
- *  the tool-card family), so the overlay separates from the transcript. */
+/** Picker panel background: the 256-color index 236 (the bubble-family
+ *  step), so the overlay separates from the transcript. */
 export const pickerPanelStyle = sgr('48;5;236')
 
 /** Picker title: bold in the reference's interaction blue (suggestion). */
 export const pickerTitleStyle = (text: string): string => bold(mistShimmer(text))
 
 /** User message bubble background (the reference's userMessageBackground
- *  #292D36); its natural 256-color index (236) keeps it one step lighter
- *  than the tool card, mirroring the truecolor hexes. */
+ *  #292D36); its natural 256-color index (236) mirrors the truecolor hex. */
 export const userBubbleBg = bgHex('#292d36')
 
-/** Tool block background (the reference's toolCardBackground #242B3A) for
- *  call boxes. Its natural 256-color index (236) collides with the bubble,
- *  so the fallback uses the darker step (235) to preserve the brightness
- *  order of the truecolor hexes. */
-export const toolBoxBg = bgHex('#242b3a', 235)
-
-/** Tool result background: the reference's dim green diff surface #2B352C —
- *  a finished result shifts to the success tint. The 256-color fallback
- *  (237) keeps it distinct from the pending card. */
-export const toolResultBoxBg = bgHex('#2b352c', 237)
+/** Tool result background: a neutral grey canvas for command output,
+ *  Codex-style (the reference's green-tinted success surface is dropped).
+ *  The 256-color fallback (237) keeps it distinct from the bubble (236). */
+export const toolResultBoxBg = bgHex('#3a3a3a', 237)
 
 /** Failed tool result background: the reference's dim rose diff surface
- *  #362B2C. The 256-color fallback (238) keeps it distinct from the pending
- *  card (236) and the success card (237). */
+ *  #362B2C. The 256-color fallback (238) keeps it distinct from the bubble
+ *  (236) and the success canvas (237). */
 export const toolErrorBoxBg = bgHex('#362b2c', 238)
 
 /** Question card background (the reference's memoryBackgroundColor #30353D):
