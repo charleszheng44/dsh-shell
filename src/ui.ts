@@ -1161,7 +1161,7 @@ export function footerHints(attachment: AppState['attachment']): string {
     ? 'Ctrl+A allow once · Ctrl+R reject · Enter send · ↑ history'
     : question
       ? 'Answer: a number picks an option, commas pick several, any text answers'
-      : 'Enter send · ↑ history · Approvals: Ctrl+A allow · Ctrl+R reject'
+      : 'Enter send · ↑ history'
   return footerStyle(`${keys}\n${mode}`)
 }
 

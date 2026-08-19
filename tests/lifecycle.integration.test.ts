@@ -299,9 +299,19 @@ function startQueueHost(): Promise<{
         respondBodies.push(message)
         res.writeHead(200, { 'content-type': 'application/json' })
         res.end(JSON.stringify({ accepted: true }))
-        // Settle the asks so the cards clear.
-        muxSend({ type: 'approval/resolved', sessionId: SID, approvalId: 'appr-e2e', outcome: 'allowed-once' })
-        muxSend({ type: 'question/resolved', sessionId: SID, questionRpcId: 'rpc-question-1', outcome: 'answered' })
+        // Settle the ask this response answers: gating on the rpcId keeps the
+        // settle frame behind the request it resolves. The question settle is
+        // delayed past the HTTP receipt so the client paints its transient
+        // 'Answered' notice before the resolve frame clears it — deterministic
+        // order, and the resolve-by-questionRpcId path is genuinely hit.
+        if (message.rpcId === 'rpc-appr-e2e') {
+          muxSend({ type: 'approval/resolved', sessionId: SID, approvalId: 'appr-e2e', outcome: 'allowed-once' })
+        }
+        if (message.rpcId === 'rpc-question-1') {
+          setTimeout(() => {
+            muxSend({ type: 'question/resolved', sessionId: SID, questionRpcId: 'rpc-question-1', outcome: 'answered' })
+          }, 100)
+        }
         return
       }
       let parsed: { method?: string; rpcId?: string; payload?: { sessionId?: string; itemId?: string; action?: unknown; provider?: string; model?: string } } = {}
@@ -656,6 +666,27 @@ test('Ctrl+U pops the last queued message into the composer end to end', async (
       ok: true,
       value: { sessionId: 's1', answer: { answers: [{ id: 'qa', selected: ['Yes'] }] } },
     })
+    // The accepted receipt sets the transient 'Answered' notice; the delayed
+    // question/resolved frame then clears it, so the resolve-by-questionRpcId
+    // path is exercised end to end — a broken settle would leave the notice
+    // stuck and fail this step.
+    await waitForStdout(stdoutRef, '· Answered')
+    await waitFor(() => {
+      const segments: Array<{ row: number; text: string }> = []
+      let row = 1
+      let last = 0
+      const position = /\x1b\[(\d+);1H/g
+      for (let m = position.exec(stdoutRef.value); m !== null; m = position.exec(stdoutRef.value)) {
+        const text = stdoutRef.value.slice(last, m.index)
+        if (text !== '') segments.push({ row, text })
+        row = Number(m[1])
+        last = m.index + m[0].length
+      }
+      if (last < stdoutRef.value.length) segments.push({ row, text: stdoutRef.value.slice(last) })
+      // Old frames accumulate, so the header row's LAST write decides.
+      const header = segments.filter((segment) => segment.row === 1).at(-1)
+      return header !== undefined && !header.text.includes('· Answered')
+    }, 'question/resolved clears the Answered notice')
     // The software blink must cycle on -> off -> on: only the 530ms timer
     // can hide the cursor again after a focused frame showed it. Poll so a
     // full half-second cycle has time to elapse.
