@@ -27,8 +27,7 @@ import {
   type SelectItem,
 } from '@earendil-works/pi-tui'
 
-import type { AppState, AppView, ProjectRow, QuestionItem, SessionRow, SubmitResult } from './app.js'
-import type { QueuedInboxItem } from '@deepseek-ai/dsh-host-apiproxy/api'
+import { queuedItemText, type AppState, type AppView, type ProjectRow, type QuestionItem, type SessionRow, type SubmitResult } from './app.js'
 import { partialSegments, type AssistantSegment, type TranscriptRow } from './transcript.js'
 import {
   assistantMarker,
@@ -204,14 +203,22 @@ export function neutralizeLinks(markdown: string): string {
  */
 export function terminalSafeText(text: string): string {
   const normalized = text.replace(/\r\n?/g, '\n')
-  const stripped = stripVTControlCharacters(normalized)
-  // C0/C1 controls except LF and tab, plus the line/paragraph separators:
-  // U+2028/U+2029 are invisible to many terminals and can smuggle content
-  // past link-neutralization regexes.
-  // C0/C1 controls except LF and tab, the line/paragraph separators, and
-  // bidi/format controls (RLO, LRM, isolates, Arabic letter mark) that can
-  // visually reorder or spoof transcript lines. U+200B (used by the link
-  // neutralizer) is deliberately kept.
+  // DCS (ESC P ... ESC \, or the C1 single-byte 0x90 ... 0x9C form) carries
+  // terminal payloads (query responses, sixel graphics);
+  // stripVTControlCharacters removes the ESC bytes but leaves the payload as
+  // literal text, so drop the whole run first. An unterminated run is
+  // dropped to the end of the string: safety beats fidelity for a pasted
+  // ESC P.
+  const noDcs = normalized
+    .replace(/\x1bP[\s\S]*?(?:\x1b\\|$)/g, '')
+    .replace(/\x90[\s\S]*?(?:\x9c|$)/g, '')
+  const stripped = stripVTControlCharacters(noDcs)
+  // C0/C1 controls except LF and tab, the line/paragraph separators
+  // (U+2028/U+2029 are invisible to many terminals and can smuggle content
+  // past link-neutralization regexes), and bidi/format controls (RLO, LRM,
+  // isolates, Arabic letter mark) that can visually reorder or spoof
+  // transcript lines. U+200B (used by the link neutralizer) is deliberately
+  // kept.
   return stripped.replace(
     /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u2028\u2029\u200E-\u200F\u202A-\u202E\u2066-\u2069\u061C]/g,
     '',
@@ -464,12 +471,19 @@ export class TerminalView implements AppView {
   private readonly hints = new Text('', 1, 0)
   private readonly editor = new Editor(this.tui, editorTheme, { paddingX: 1 })
   private overlay: OverlayHandle | undefined
+  /** The last rendered state: the Ctrl+U gate decides against what the user
+   *  currently sees, not against frames that arrived since. */
+  private latestState: AppState | undefined
+  /** Reentry guard: a second Ctrl+U while a pop is in flight would target the
+   *  same item id (the fresh snapshot only arrives after the host removes). */
+  private editQueuedBusy = false
 
   constructor(
     private readonly onProject: () => void,
     private readonly onSession: () => void,
     private readonly onQuit: () => void,
     private readonly onSubmit: (text: string) => Promise<SubmitResult>,
+    private readonly onEditQueued: () => Promise<string | undefined>,
   ) {
     this.editor.disableSubmit = true
     this.questionBox.addChild(this.questionText)
@@ -527,6 +541,52 @@ export class TerminalView implements AppView {
         this.onSession()
         return { consume: true }
       }
+      if (matchesKey(data, 'ctrl+u')) {
+        // Codex's edit-last-queued: pop the last queued message back into the
+        // composer. pi cannot reliably decode Alt+Up, so Ctrl+U is the
+        // binding, matching the hint in the queue preview. Gated so the
+        // editor's native binding keeps working when there is nothing to pop,
+        // and so an open question or picker cannot have its draft/selection
+        // clobbered by a pop.
+        if (this.latestState === undefined
+          || !canEditQueued(this.latestState, this.overlay !== undefined, this.editQueuedBusy)) {
+          return undefined
+        }
+        this.editQueuedBusy = true
+        this.editor.disableSubmit = true // guard reentry
+        // Capture the composer at keypress: landing replaces whatever was
+        // there (Codex's edit-last-queued replaces the buffer), so a pop
+        // with a draft must not be lost; only keystrokes made DURING the
+        // flight (a changed buffer) win over the restore.
+        const draftAtPress = this.editor.getText()
+        void this.onEditQueued().then((text) => {
+          // Mid-flight guards mirroring render(): never rip focus from a
+          // picker opened while the pop was in flight, never land text into
+          // the composer while a question flipped it into answering mode or
+          // the session disconnected, and never clobber keystrokes made
+          // while the pop was in flight. An all-control message sanitizes
+          // to empty and must not clear the composer either.
+          const attachment = this.latestState?.attachment
+          const answering = attachment !== undefined && attachment.phase === 'attached' && attachment.pendingQuestions.length > 0
+          const clean = terminalSafeText(text ?? '')
+          if (text !== undefined
+            && clean !== ''
+            && !answering
+            && this.latestState?.connection === 'connected'
+            && this.overlay === undefined
+            && this.editor.getText() === draftAtPress) {
+            this.editor.setText(clean)
+            this.tui.setFocus(this.editor)
+          }
+        }).catch(() => {
+          // The port folds every failure into a result, so this is belt and
+          // braces; the busy guard must not stay stuck either way.
+        }).finally(() => {
+          this.editQueuedBusy = false
+          this.editor.disableSubmit = !this.editorEnabled
+        })
+        return { consume: true }
+      }
       if (matchesKey(data, 'ctrl+c')) {
         this.onQuit()
         return { consume: true }
@@ -551,6 +611,7 @@ export class TerminalView implements AppView {
   private workingTimer: ReturnType<typeof setInterval> | undefined
 
   render(state: AppState): void {
+    this.latestState = state
     this.header.setText(headerStyle(headerText(state)))
     this.workingActive = isWorking(state)
     if (this.workingActive && this.workingTimer === undefined) {
@@ -574,7 +635,10 @@ export class TerminalView implements AppView {
     this.renderTranscript(state.attachment, connected)
     const policy = editorPolicy(state, this.overlay !== undefined)
     this.editorEnabled = policy.enabled
-    this.editor.disableSubmit = policy.disableSubmit
+    // A render mid-pop must not re-enable Enter while the pop RPC is in
+    // flight (the Ctrl+U path sets disableSubmit itself, but every render
+    // would otherwise overwrite it from the policy).
+    this.editor.disableSubmit = policy.disableSubmit || this.editQueuedBusy
     if (policy.clearText) {
       this.editor.setText('')
       // A disconnect or detach while a picker is open must not rip focus
@@ -818,26 +882,52 @@ export function statsText(attachment: AppState['attachment']): string {
   return `${footerStyle(`↑${formatTokens(uncachedInputTokens)} · ↓${formatTokens(outputTokens)}${read}${write} `)}${context}`
 }
 
-/** One-line queue status: how many prompts are queued, with the first prompt's
- *  text preview — the terminal stand-in for the Web UI's queue dock. */
+/** Codex-style queue preview panel: a bulleted section in the footer under
+ *  the composer listing the queued follow-up inputs (dim, indented) with the
+ *  edit hint. Bounded: at most MAX_QUEUED_ROWS items, each item's text
+ *  capped at MAX_QUEUED_WIDTH visible columns (a full row is ~66 columns),
+ *  so a long paste or a hostile host cannot crush the composer or the
+ *  transcript off-screen. Empty when nothing is queued, so the footer keeps
+ *  no rows. The edit hint is hidden while a question is open: the Ctrl+U
+ *  gate is off then, and the hint must not advertise a key that would
+ *  clobber the answer draft. */
+export const MAX_QUEUED_ROWS = 4
+export const MAX_QUEUED_WIDTH = 60
 export function queuedText(attachment: AppState['attachment']): string {
   if (attachment.phase !== 'attached') return ''
   const queued = attachment.queue.filter((item) => item.placement === 'queued')
   if (queued.length === 0) return ''
-  const first = queued[0]
-  const preview = first === undefined ? '' : promptPreview(first)
-  const count = queued.length === 1 ? '1 prompt' : `${queued.length} prompts`
-  // No emoji here: U+23F3 renders double-width or tofu on legacy fonts.
-  return footerStyle(preview === '' ? `${count} queued` : `${count} queued: "${preview}"`)
+  const lines = ['• Queued follow-up inputs']
+  for (const item of queued.slice(0, MAX_QUEUED_ROWS)) {
+    const text = terminalSafeText(queuedItemText(item)).replace(/\s+/g, ' ').trim()
+    // An item with no text part is still in the queue (Ctrl+U pops and
+    // removes it); show a placeholder instead of a bare indent row.
+    const preview = text === '' ? '(no preview)' : truncateByVisibleWidth(text, MAX_QUEUED_WIDTH)
+    lines.push(`  ↳ ${preview}${visibleWidth(text) > MAX_QUEUED_WIDTH ? '…' : ''}`)
+  }
+  if (queued.length > MAX_QUEUED_ROWS) {
+    lines.push(`  … +${queued.length - MAX_QUEUED_ROWS} more queued`)
+  }
+  // The hint is hidden while a question is open or a prompt submission is
+  // in flight: the Ctrl+U gate is off then, and the hint must not advertise
+  // a key that would clobber the answer draft or remove the wrong item.
+  if (attachment.pendingQuestions.length === 0 && attachment.sending !== true) {
+    lines.push('    Ctrl+U edit last queued message')
+  }
+  return lines.map((line) => footerStyle(line)).join('\n')
 }
 
-/** First text part of a queued message, collapsed and bounded for one line. */
-function promptPreview(item: QueuedInboxItem): string {
-  const content = item.message.content
-  const part = content?.find((candidate) => candidate.type === 'text' && typeof candidate.text === 'string')
-  if (part === undefined || part.type !== 'text') return ''
-  const oneLine = terminalSafeText(part.text).replace(/\s+/g, ' ').trim()
-  return oneLine.length > 48 ? `${oneLine.slice(0, 48)}…` : oneLine
+/** Whether Ctrl+U may pop the last queued message back into the composer:
+ *  attached and live, no question being answered, no prompt submission in
+ *  flight, no picker overlay open, no pop already in flight, and at least
+ *  one queued item. When false the key falls through to the editor (its
+ *  native Ctrl+U) or the overlay, so an open question's draft or a picker's
+ *  selection is never clobbered. */
+export function canEditQueued(state: AppState, overlayOpen: boolean, busy: boolean): boolean {
+  if (busy || overlayOpen) return false
+  if (state.connection !== 'connected' || state.attachment.phase !== 'attached') return false
+  if (state.attachment.pendingQuestions.length > 0 || state.attachment.sending) return false
+  return state.attachment.queue.some((item) => item.placement === 'queued')
 }
 
 /** Footer hints: while a question is open the composer answers it. */

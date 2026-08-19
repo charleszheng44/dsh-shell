@@ -183,6 +183,15 @@ export interface QuestionAnswerItem {
   custom?: string
 }
 
+/** The plain text of a queued message: the first text content part, raw
+ *  (the display and editor paths sanitize at the edge with
+ *  terminalSafeText, so the wire copy stays verbatim). */
+export function queuedItemText(item: QueuedInboxItem): string {
+  const content = item.message.content
+  const part = content?.find((candidate) => candidate.type === 'text' && typeof candidate.text === 'string')
+  return part !== undefined && part.type === 'text' ? part.text : ''
+}
+
 /** Turn a typed answer into per-question answers: a number (or comma list)
  *  picks options by position, an exact option label picks that option, and
  *  anything else becomes a custom answer. */
@@ -861,6 +870,35 @@ export class App {
       else this.inbox.set(String(sessionId), { ...cached, questions })
     }
     return { ok: true }
+  }
+
+  /** Pop the last queued message back into the composer (Codex's edit-last-
+   *  queued): remove it from the host queue and return its raw text, or
+   *  undefined when there is nothing queued or the removal is rejected. */
+  async editQueuedItem(): Promise<string | undefined> {
+    const attachment = this.state.attachment
+    if (this.closed || this.state.connection !== 'connected' || attachment.phase !== 'attached') return undefined
+    const queued = attachment.queue.filter((item) => item.placement === 'queued')
+    const last = queued.at(-1)
+    if (last === undefined) return undefined
+    const sessionId = attachment.sessionId
+    const generation = attachment.generation
+    const result = await this.port.updateQueue(sessionId, last.id, { kind: 'remove' }, this.signal)
+    const current = this.state.attachment
+    if (this.closed
+      || this.state.connection !== 'connected'
+      || current.phase !== 'attached'
+      || current.sessionId !== sessionId
+      || current.generation !== generation) {
+      return undefined
+    }
+    if (!result.ok) {
+      this.setState({ notice: result.error.message })
+      return undefined
+    }
+    // The host follows up with a fresh session/queue snapshot; nothing to
+    // mutate locally.
+    return queuedItemText(last)
   }
 
   /** Idempotent shutdown: stop the view and settle the stream pump. */

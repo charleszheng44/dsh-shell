@@ -261,3 +261,198 @@ test('a dropped mux stream shows Disconnected and Ctrl+C still restores once', a
     server.close()
   }
 })
+
+/**
+ * Stub host with one workspace/session and a live prompt queue: pushes a
+ * session/queue snapshot right after the mux opens, records
+ * session.updateQueue calls, and broadcasts a fresh snapshot after each
+ * removal (the client's panel is authoritative from these snapshots).
+ */
+function startQueueHost(): Promise<{
+  server: Server
+  origin: string
+  updateQueueCalls: Array<{ sessionId: string; itemId: string; action: unknown }>
+}> {
+  const updateQueueCalls: Array<{ sessionId: string; itemId: string; action: unknown }> = []
+  const SID = 's1'
+  const queue = [
+    { id: 'msg-1', placement: 'queued', message: { id: 'msg-1', role: 'user', content: [{ type: 'text', text: 'fix the parser' }], source: { kind: 'user' } } },
+    { id: 'msg-2', placement: 'queued', message: { id: 'msg-2', role: 'user', content: [{ type: 'text', text: 'run the tests' }], source: { kind: 'user' } } },
+  ]
+  let muxSend: (payload: unknown) => void = () => {}
+  const pushQueueSnapshot = (): void => {
+    muxSend({ type: 'session/queue', sessionId: SID, items: queue.map((item) => ({ ...item })) })
+  }
+  const server = createServer((req, res) => {
+    let body = ''
+    req.on('data', (chunk: Buffer) => { body += chunk.toString() })
+    req.on('end', () => {
+      let parsed: { method?: string; rpcId?: string; payload?: { sessionId?: string; itemId?: string; action?: unknown } } = {}
+      try { parsed = JSON.parse(body) as typeof parsed } catch { /* fall through */ }
+      const method = parsed.method ?? ''
+      let value: unknown
+      switch (method) {
+        case 'host.describe':
+          value = { version: '0.0.1', cwd: '/tmp', attachedSessions: 0, canOpenPath: false }
+          break
+        case 'workspace.list':
+          value = { items: [{ workspaceId: 'w1', path: '/tmp', title: 'stub', sessionIds: [SID], createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' }], archivedSessionIds: [] }
+          break
+        case 'session.list':
+          value = { items: [{ sessionId: SID, updatedAt: 0, running: false, blank: false, projections: { asOfSeq: 1, values: { title: 'stub session' } } }] }
+          break
+        case 'session.history':
+          value = { events: [], hasMore: false }
+          break
+        case 'session.updateQueue': {
+          const itemId = parsed.payload?.itemId ?? ''
+          const action = parsed.payload?.action
+          updateQueueCalls.push({ sessionId: parsed.payload?.sessionId ?? '', itemId: String(itemId), action })
+          const index = queue.findIndex((item) => item.id === itemId)
+          if (index >= 0 && typeof action === 'object' && action !== null && (action as { kind?: string }).kind === 'remove') {
+            queue.splice(index, 1)
+          }
+          pushQueueSnapshot()
+          value = { accepted: true }
+          break
+        }
+        default:
+          value = undefined
+      }
+      if (value === undefined) {
+        res.writeHead(404)
+        res.end('not found')
+        return
+      }
+      const rpcId = parsed.rpcId ?? 'stub'
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ type: 'server-response', rpcId, result: { ok: true, value } }))
+    })
+  })
+  server.on('upgrade', (req: IncomingMessage, socket: Duplex) => {
+    if (req.url !== '/api/events.mux') {
+      socket.destroy()
+      return
+    }
+    const key = req.headers['sec-websocket-key']
+    if (typeof key !== 'string') {
+      socket.destroy()
+      return
+    }
+    const accept = createHash('sha1')
+      .update(`${key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`)
+      .digest('base64')
+    socket.write(
+      'HTTP/1.1 101 Switching Protocols\r\n'
+      + 'Upgrade: websocket\r\n'
+      + 'Connection: Upgrade\r\n'
+      + `Sec-WebSocket-Accept: ${accept}\r\n\r\n`,
+    )
+    muxSend = (payload: unknown): void => {
+      const message = JSON.stringify({
+        type: 'server-request',
+        rpcId: 'stub-mux',
+        method: 'events.mux',
+        payload,
+      })
+      const frame = Buffer.alloc(message.length >= 126 ? 4 + message.length : 2 + message.length)
+      frame[0] = 0x81
+      if (message.length >= 126) {
+        frame[1] = 0x7e
+        frame.writeUInt16BE(message.length, 2)
+        frame.write(message, 4)
+      } else {
+        frame[1] = message.length
+        frame.write(message, 2)
+      }
+      socket.write(frame)
+    }
+    muxSend({ type: 'session/subscribed', sessionId: SID, lastSeq: 0 })
+    // The queue snapshot replays on open; the client caches it and seeds
+    // the attachment when the user attaches.
+    pushQueueSnapshot()
+    socket.on('data', (chunk: Buffer) => {
+      const first = chunk[0]
+      if (chunk.length >= 2 && first !== undefined && (first & 0x0f) === 0x8) {
+        const reply = Buffer.from([0x88, 0x00])
+        socket.write(reply)
+        socket.end()
+      }
+    })
+  })
+  return new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address() as AddressInfo
+      resolve({ server, origin: `http://127.0.0.1:${address.port}`, updateQueueCalls })
+    })
+  })
+}
+
+/** Poll a predicate on the accumulated stdout until it holds. */
+async function waitFor(predicate: () => boolean, label: string, timeoutMs = 5000): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (predicate()) return
+    await sleep(50)
+  }
+  throw new Error(`condition never held: ${label}`)
+}
+
+test('Ctrl+U pops the last queued message into the composer end to end', async () => {
+  const { server, origin, updateQueueCalls } = await startQueueHost()
+  let child: ChildProcess | undefined
+  try {
+    const spawned = runCli(['--host', origin])
+    child = spawned.child
+    const { done } = spawned
+    const stdoutRef = { value: '' }
+    child.stdout?.on('data', (chunk: Buffer) => { stdoutRef.value += chunk.toString() })
+    await waitForConnected(child, stdoutRef)
+    // The project picker auto-opens at boot: pick the workspace, then the
+    // session.
+    await waitForStdout(stdoutRef, 'Select project')
+    child.stdin?.write('\u001b[B\r')
+    await waitForStdout(stdoutRef, 'Select session')
+    child.stdin?.write('\r')
+    await waitForStdout(stdoutRef, 'Queued follow-up inputs')
+    await waitForStdout(stdoutRef, '↳ run the tests')
+    assert.equal(updateQueueCalls.length, 0)
+    child.stdin?.write('\u0015') // Ctrl+U
+    // The host sees the remove for the LAST queued item.
+    await waitFor(() => updateQueueCalls.length === 1, 'updateQueue call')
+    assert.equal(updateQueueCalls[0]?.itemId, 'msg-2')
+    assert.deepEqual(updateQueueCalls[0]?.action, { kind: 'remove' })
+    // The accumulated stdout keeps old frames, so judge each row by its
+    // LAST write (pi erases with \x1b[2K before writing content; a row's
+    // final write is the current screen state). The composer row must end
+    // on the popped text with no '↳' (the panel rows carry the ↳ prefix),
+    // and the panel's final rows must show the surviving item without the
+    // removed one — a substring of the stale pre-pop row alone would not
+    // satisfy either check.
+    const lastWrite = (row: string): string => {
+      const parts = row.split('\x1b[2K')
+      return parts.at(-1) ?? ''
+    }
+    await waitFor(() => {
+      const rows = stdoutRef.value.replace(/\x1b\[\d+;\d*H/g, '\n').split('\n')
+      const editorRestored = rows.some((row) => {
+        const last = lastWrite(row)
+        return last.includes('run the tests') && !last.includes('↳')
+      })
+      const panelFinal = rows.some((row) => {
+        const last = lastWrite(row)
+        return last.includes('fix the parser') && !last.includes('↳ run the tests')
+      })
+      return editorRestored && panelFinal
+    }, 'panel shrink and composer restore')
+    child.stdin?.write('\u0003') // Ctrl+C
+    const result = await done
+    assert.equal(result.code, 0)
+    assert.equal(result.restored, true)
+  } finally {
+    // A failed assertion must not strand the spawned CLI on the stub's
+    // keep-alive connections (which would also wedge server.close()).
+    child?.kill()
+    server.close()
+  }
+})

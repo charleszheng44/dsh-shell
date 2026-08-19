@@ -8,7 +8,7 @@ import { test } from 'node:test'
 
 import { Container, Markdown, getCapabilities, setCapabilities, visibleWidth as visibleWidthOf, type Component } from '@earendil-works/pi-tui'
 
-import { PickerFrame, TranscriptList, assistantMarkdown, deepDivingText, editorPolicy, editorTextAfterSubmit, footerHints, formatTokens, headerText, isWorking, neutralizeLinks, pickerLabel, questionCardText, queuedText, reconcileRows, sessionPickerItems, statsText, terminalSafeText, toolPreviewText } from '../src/ui.js'
+import { PickerFrame, TranscriptList, assistantMarkdown, canEditQueued, deepDivingText, editorPolicy, editorTextAfterSubmit, footerHints, formatTokens, headerText, isWorking, neutralizeLinks, pickerLabel, questionCardText, queuedText, reconcileRows, sessionPickerItems, statsText, terminalSafeText, toolPreviewText } from '../src/ui.js'
 import type { TranscriptRow } from '../src/transcript.js'
 import { contextStyle } from '../src/theme.js'
 
@@ -434,30 +434,111 @@ test('statsText renders a pi-style usage line only while attached', () => {
   assert.equal(statsText(zeroWindow), '')
 })
 
-test('queuedText shows the pending prompt count and a preview', () => {
+test('queuedText renders the codex-style preview panel', () => {
   assert.equal(queuedText({ phase: 'none' } as never), '')
-  assert.equal(queuedText({ phase: 'attached', queue: [] } as never), '')
+  assert.equal(queuedText({ phase: 'attached', pendingQuestions: [], queue: [] } as never), '')
   const item = (id: string, text: string, placement = 'queued') => ({
     id,
     placement,
     message: { role: 'user', content: [{ type: 'text', text }] },
   })
-  const one = queuedText({ phase: 'attached', queue: [item('m1', 'fix the parser')] } as never)
-  assert.ok(one.includes('1 prompt queued'), one)
-  assert.ok(one.includes('fix the parser'), one)
-  const many = queuedText({ phase: 'attached', queue: [item('m1', 'first'), item('m2', 'second')] } as never)
-  assert.ok(many.includes('2 prompts queued'), many)
-  assert.ok(many.includes('first'), many)
-  // Steering/context items are not part of the queue dock.
-  const onlySteering = queuedText({ phase: 'attached', queue: [item('m1', 'steer', 'steering')] } as never)
+  const one = queuedText({ phase: 'attached', pendingQuestions: [], queue: [item('m1', 'fix the parser')] } as never)
+  assert.ok(one.includes('• Queued follow-up inputs'), one)
+  assert.ok(one.includes('↳ fix the parser'), one)
+  assert.ok(one.includes('Ctrl+U edit last queued message'), one)
+  // While a question is open the edit hint disappears: the gate is off and
+  // the hint must not advertise a key that would clobber the answer draft.
+  const answering = queuedText({ phase: 'attached', pendingQuestions: [{ rpcId: 'q1' }], queue: [item('m1', 'fix the parser')] } as never)
+  assert.ok(answering.includes('• Queued follow-up inputs'), answering)
+  assert.ok(!answering.includes('Ctrl+U edit last queued message'), answering)
+  // Same while a prompt submission is in flight (the gate is off then).
+  const sending = queuedText({ phase: 'attached', sending: true, pendingQuestions: [], queue: [item('m1', 'fix the parser')] } as never)
+  assert.ok(sending.includes('• Queued follow-up inputs'), sending)
+  assert.ok(!sending.includes('Ctrl+U edit last queued message'), sending)
+  // Every queued input is listed, in order.
+  const many = queuedText({ phase: 'attached', pendingQuestions: [], queue: [item('m1', 'first'), item('m2', 'second')] } as never)
+  assert.ok(many.indexOf('↳ first') < many.indexOf('↳ second'), many)
+  // Steering/context items are not part of the queue panel.
+  const onlySteering = queuedText({ phase: 'attached', pendingQuestions: [], queue: [item('m1', 'steer', 'steering')] } as never)
   assert.equal(onlySteering, '')
-  // A prompt with an embedded newline cannot wrap the footer line.
-  const wrapped = queuedText({ phase: 'attached', queue: [item('m1', 'multi\nline prompt')] } as never)
-  assert.ok(!wrapped.includes('\n'), wrapped)
+  // A prompt with an embedded newline collapses to one row.
+  const wrapped = queuedText({ phase: 'attached', pendingQuestions: [], queue: [item('m1', 'multi\nline prompt')] } as never)
   assert.ok(wrapped.includes('multi line prompt'), wrapped)
-  // A long prompt is truncated for the one-line preview.
-  const long = queuedText({ phase: 'attached', queue: [item('m1', 'x'.repeat(100))] } as never)
-  assert.ok(long.includes('…'), long)
+  // Long input is truncated to the visible-width cap with an ellipsis.
+  const long = queuedText({ phase: 'attached', pendingQuestions: [], queue: [item('m1', 'x'.repeat(100))] } as never)
+  assert.ok(long.includes(`↳ ${'x'.repeat(60)}…`), long)
+  // A queued item with no text part gets a placeholder row, not a bare indent.
+  const empty = queuedText({ phase: 'attached', pendingQuestions: [], queue: [item('m1', '')] } as never)
+  assert.ok(empty.includes('↳ (no preview)'), empty)
+  // The panel is bounded: only the first rows render, then a count line.
+  const manyQueued = Array.from({ length: 9 }, (_, i) => item(`m${i}`, `prompt ${i}`))
+  const capped = queuedText({ phase: 'attached', pendingQuestions: [], queue: manyQueued } as never)
+  assert.ok(capped.includes('↳ prompt 0'), capped)
+  assert.ok(capped.includes('↳ prompt 3'), capped)
+  assert.ok(!capped.includes('↳ prompt 4'), capped)
+  assert.ok(capped.includes('… +5 more queued'), capped)
+})
+
+test('queuedText strips hostile byte sequences and never injects rows', () => {
+  const item = (id: string, text: string) => ({
+    id,
+    placement: 'queued',
+    message: { role: 'user', content: [{ type: 'text', text }] },
+  })
+  const cases: Array<[string, string, string]> = [
+    // OSC 8 hyperlink with BEL terminator.
+    ['osc8-bel', 'click \x1b]8;;https://evil.example\x07here\x07', 'click here'],
+    // OSC 8 with ST terminator.
+    ['osc8-st', 'a\x1b]8;;https://evil\x1b\\b', 'ab'],
+    // CSI color.
+    ['csi', '\x1b[31mred\x1b[0m', 'red'],
+    // C1 CSI byte.
+    ['c1', 'x\x9b31my', 'xy'],
+    // DCS: the whole run (payload included) is dropped.
+    ['dcs', '\x1bP1;2|payload\x1b\\end', 'end'],
+    // C1 single-byte DCS (0x90 ... 0x9C ST): same wholesale drop.
+    ['c1-dcs', 'a\x90payload\x9cb', 'ab'],
+    // CRLF must not create an extra panel row.
+    ['crlf', 'line one\r\nline two', 'line one line two'],
+  ]
+  for (const [label, raw, expected] of cases) {
+    const out = queuedText({ phase: 'attached', pendingQuestions: [], queue: [item('m1', raw)] } as never)
+    assert.ok(out.includes(expected), `${label}: ${JSON.stringify(out)}`)
+    const withoutWrappers = out
+      .split('\n')
+      .map((line) => line.replace(/\x1b\[2m|\x1b\[22m/g, ''))
+      .join('\n')
+    assert.ok(!/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/.test(withoutWrappers), `${label}: control byte leaked: ${JSON.stringify(withoutWrappers)}`)
+    assert.equal(out.split('\n').length, 3, `${label}: expected header+item+hint rows`)
+  }
+})
+
+test('canEditQueued gates Ctrl+U on state, overlay, and reentry', () => {
+  const item = (placement = 'queued') => ({ id: 'm1', placement, message: { role: 'user', content: [] } })
+  const attached = {
+    phase: 'attached',
+    sending: false,
+    queue: [item()],
+    pendingQuestions: [],
+  }
+  const state = (attachment: unknown): never => ({ connection: 'connected', attachment }) as never
+  assert.equal(canEditQueued(state(attached), false, false), true)
+  // A pending question must not be clobbered by a pop.
+  assert.equal(canEditQueued(state({ ...attached, pendingQuestions: [{ rpcId: 'q1' }] }), false, false), false)
+  // A prompt submission in flight: the queue may still show the previous
+  // last item, so a pop could remove the wrong one.
+  assert.equal(canEditQueued(state({ ...attached, sending: true }), false, false), false)
+  // An open picker overlay keeps focus where it is.
+  assert.equal(canEditQueued(state(attached), true, false), false)
+  // A pop already in flight must not target the same item twice.
+  assert.equal(canEditQueued(state(attached), false, true), false)
+  // Nothing queued: fall through to the editor's native Ctrl+U.
+  assert.equal(canEditQueued(state({ ...attached, queue: [] }), false, false), false)
+  // Steering/context placements do not count as pop targets.
+  assert.equal(canEditQueued(state({ ...attached, queue: [item('steering')] }), false, false), false)
+  // Not attached or not connected: no pop.
+  assert.equal(canEditQueued(state({ phase: 'none', queue: [], pendingQuestions: [] }), false, false), false)
+  assert.equal(canEditQueued({ connection: 'connecting', attachment: attached } as never, false, false), false)
 })
 
 test('questionCardText renders the question and its numbered options', () => {

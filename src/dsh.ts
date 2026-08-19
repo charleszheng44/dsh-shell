@@ -31,10 +31,12 @@ import { muxFrameSchema } from '@deepseek-ai/dsh-host-apiproxy/api/events.schema
 import type {
   HistoryEntry,
   MuxFrame,
+  QueueAction,
   SessionSummary,
   WorkspaceView,
 } from '@deepseek-ai/dsh-host-apiproxy/api'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import type { MessageId } from '@deepseek-ai/dsh-llm/brand'
 
 /** host.describe response value, exactly as the published schema defines it. */
 export type HostDescription = ResponseValue<'host.describe'>
@@ -65,6 +67,11 @@ export interface DshPort {
    *  rpcId on POST /api/respond. Never retried — a late duplicate response
    *  would settle a request that may already be gone. */
   respond(message: ClientResponse, signal?: AbortSignal): Promise<RpcReceipt>
+  /** Mutate one still-pending queue item (remove/edit). A write: never
+   *  retried, so a duplicate cannot apply twice. */
+  updateQueue(sessionId: SessionId, itemId: MessageId, action: QueueAction, signal?: AbortSignal): Promise<RpcResult<{
+    accepted: true
+  }>>
 }
 
 /** Upper bound on one WebSocket message: a hostile host must not be able to
@@ -129,6 +136,13 @@ export interface PortClient {
       accepted: true
       command?: { kind: 'success'; text?: string }
     }>>
+    updateQueue(payload: {
+      sessionId: SessionId
+      itemId: MessageId
+      action: QueueAction
+    }, signal?: AbortSignal): Promise<RpcResponse<{
+      accepted: true
+    }>>
   }
   /** Answer a host question by echoing its server-request rpcId. */
   respond(message: ClientResponse, signal?: AbortSignal): Promise<RpcReceipt>
@@ -154,6 +168,11 @@ export function createDshPort(client: PortClient): DshPort {
     // not-pending.
     respond: (message, signal) => client.respond(message, signal)
       .catch(() => ({ accepted: false, reason: 'bad-response' })),
+    updateQueue: (sessionId, itemId, action, signal) => unary(() => client.sessions.updateQueue({
+      sessionId,
+      itemId,
+      action,
+    }, signal), false),
     async *stream(signal, onOpen) {
       // Strip the RPC envelope from every mux frame but keep its rpcId (the
       // question/requested answer must echo it); stream errors surface as the

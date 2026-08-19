@@ -33,6 +33,14 @@ class FakePort implements DshPort {
   promptResult: Awaited<ReturnType<DshPort['prompt']>> = { ok: true, value: { accepted: true } }
 
   respondCalls: Array<{ rpcId: string; value: unknown }> = []
+
+  updateQueueCalls: Array<{ sessionId: string; itemId: string; action: unknown }> = []
+  updateQueueResult: Awaited<ReturnType<DshPort['updateQueue']>> = { ok: true, value: { accepted: true } }
+
+  async updateQueue(sessionId: string, itemId: string, action: unknown): Promise<Awaited<ReturnType<DshPort['updateQueue']>>> {
+    this.updateQueueCalls.push({ sessionId: String(sessionId), itemId: String(itemId), action })
+    return this.updateQueueResult
+  }
   respondResult: Awaited<ReturnType<DshPort['respond']>> = { accepted: true }
 
   async respond(message: Parameters<DshPort['respond']>[0]): Promise<Awaited<ReturnType<DshPort['respond']>>> {
@@ -208,6 +216,37 @@ test('a pending question routes the composer to answering instead of prompting',
   // The pending question is dropped after the answer.
   const after = view.renders.at(-1)?.attachment
   assert.equal(after?.phase === 'attached' && after.pendingQuestions.length, 0)
+})
+
+test('editQueuedItem pops the last queued message back into the composer', async () => {
+  const port = new FakePort()
+  port.historyEvents = { s1: [] }
+  const { app, view } = await booted(port)
+  await app.attach('s1' as never)
+  port.push({ type: 'session/queue', sessionId: 's1' as never, items: [
+    { id: 'm1', placement: 'queued', message: { id: 'm1', role: 'user', content: [{ type: 'text', text: 'first prompt' }], source: { kind: 'user' } } },
+    { id: 'm2', placement: 'queued', message: { id: 'm2', role: 'user', content: [{ type: 'text', text: 'second prompt' }], source: { kind: 'user' } } },
+  ] } as never)
+  await flush()
+  const text = await app.editQueuedItem()
+  assert.equal(text, 'second prompt')
+  assert.equal(port.updateQueueCalls.length, 1)
+  const call = port.updateQueueCalls[0]
+  assert.equal(call?.itemId, 'm2')
+  assert.deepEqual(call?.action, { kind: 'remove' })
+  // Nothing queued: no call, undefined.
+  port.push({ type: 'session/queue', sessionId: 's1' as never, items: [] } as never)
+  await flush()
+  assert.equal(await app.editQueuedItem(), undefined)
+  assert.equal(port.updateQueueCalls.length, 1)
+  // A rejected removal surfaces the error and returns undefined.
+  port.push({ type: 'session/queue', sessionId: 's1' as never, items: [
+    { id: 'm3', placement: 'queued', message: { id: 'm3', role: 'user', content: [{ type: 'text', text: 'stuck' }], source: { kind: 'user' } } },
+  ] } as never)
+  await flush()
+  port.updateQueueResult = { ok: false, error: { code: 'internal', message: 'boom', details: {} } }
+  assert.equal(await app.editQueuedItem(), undefined)
+  assert.equal(view.renders.at(-1)?.notice, 'boom')
 })
 
 test('the Answered notice does not stick when the resolve frame beats the receipt', async () => {

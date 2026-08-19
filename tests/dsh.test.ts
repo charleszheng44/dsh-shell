@@ -30,6 +30,7 @@ function stubClient(overrides: {
       list: async () => ok({ items: [] }),
       history: async () => ok({ events: [], hasMore: false }),
       prompt: async () => ok({ accepted: true }),
+      updateQueue: async () => ok({ accepted: true }),
     },
     respond: async () => ({ accepted: true }),
     events: {
@@ -314,4 +315,37 @@ test('createDshPort.respond echoes the message and folds transport throws', asyn
   })
   const folded = await createDshPort(failing).respond(message as never, undefined)
   assert.deepEqual(folded, { accepted: false, reason: 'bad-response' })
+})
+
+test('createDshPort.updateQueue sends the item id and action, never retried', async () => {
+  let seen: unknown
+  let calls = 0
+  const client = stubClient({
+    sessions: {
+      updateQueue: async (payload) => {
+        calls += 1
+        seen = payload
+        return ok({ accepted: true })
+      },
+    },
+  })
+  const port: DshPort = createDshPort(client)
+  const result = await port.updateQueue('session-abc' as never, 'item-7' as never, { kind: 'remove' })
+  assert.equal(result.ok, true)
+  if (result.ok) assert.equal(result.value.accepted, true)
+  assert.deepEqual(seen, { sessionId: 'session-abc', itemId: 'item-7', action: { kind: 'remove' } })
+  // A write is never retried: the fold happens instead. Count the throwing
+  // client's own calls so a retry on it could not go undetected.
+  let failingCalls = 0
+  const failing = stubClient({
+    sessions: {
+      updateQueue: async () => {
+        failingCalls += 1
+        throw new Error('fetch failed')
+      },
+    },
+  })
+  const folded = await createDshPort(failing).updateQueue('s1' as never, 'item-1' as never, { kind: 'remove' })
+  assert.equal(folded.ok, false)
+  assert.equal(failingCalls, 1)
 })

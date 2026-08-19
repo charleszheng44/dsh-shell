@@ -142,14 +142,17 @@ export async function main(argv: readonly string[]): Promise<number> {
   }
 
   let submit: (text: string) => Promise<import('./app.js').SubmitResult> = async () => ({ ok: false, reason: 'not-attached' })
+  let editQueued: () => Promise<string | undefined> = async () => undefined
   const view = new TerminalView(
     () => { void app.openProjectPicker() },
     () => { void app.openSessionPicker() },
     () => { shutdown(0) },
     (text) => submit(text),
+    () => editQueued(),
   )
   const app = new App(createDshPort(new NodeApiClient(origin)), view, controller.signal)
   submit = (text) => app.submit(text)
+  editQueued = () => app.editQueuedItem()
 
   const shutdown = createLifecycle({
     abort: () => controller.abort(),
