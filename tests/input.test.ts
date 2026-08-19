@@ -970,3 +970,21 @@ test('ESC cancel: a turn/end during the write retires the notice (no lingering)'
   assert.equal(view.renders.at(-1)?.notice, undefined)
   assert.equal(port.cancelTurnCalls.length, 1, 'the write still went out')
 })
+
+test('ESC cancel: a mid-flight disconnect keeps the disconnect notice', async () => {
+  const port = new FakePort()
+  const { app, view } = await booted(port)
+  await attach(app, port)
+  port.push({ type: 'session/event', sessionId: 's1', event: { type: 'turn/start', seq: 2, time: 0, data: { turn: 0 } } } as never)
+  await flush()
+  let release!: (value: Awaited<ReturnType<DshPort['cancelTurn']>>) => void
+  const original = port.cancelTurn.bind(port)
+  port.cancelTurn = (sessionId) => new Promise((resolve) => { release = resolve }).then(() => original(sessionId))
+  void app.cancelTurn()
+  await flush()
+  port.push({ type: 'stream/error', error: { code: 'internal', message: 'x', details: {} } } as never)
+  await flush()
+  release({ ok: true, value: { accepted: true } })
+  await flush()
+  assert.equal(view.renders.at(-1)?.notice, 'Disconnected: stream error', 'the disconnect notice survives the late cancel result')
+})

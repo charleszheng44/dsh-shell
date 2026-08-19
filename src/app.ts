@@ -866,6 +866,8 @@ export class App {
     try {
       const result = await this.port.cancelTurn(sessionId, this.signal)
       if (this.closed) return
+      // A mid-flight disconnect keeps the disconnect notice.
+      if (this.state.connection !== 'connected') return
       if (!result.ok) {
         this.setState({ notice: `Cancel failed: ${result.error.message}` })
         return

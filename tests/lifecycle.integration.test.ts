@@ -350,9 +350,12 @@ function startQueueHost(): Promise<{
         }
         case 'session.cancel': {
           cancelCalls.push((parsed.payload as { sessionId?: string }).sessionId ?? '')
-          // Settle the stop immediately: the turn/end clears the working
-          // line (and retires the 'Turn cancelled' notice).
-          muxSend({ type: 'session/event', sessionId: SID, event: { type: 'turn/end', seq: 4, time: 0, data: { turn: 0 } } })
+          // Settle the stop AFTER the receipt: the 'Turn cancelled' notice
+          // paints first, then the turn/end retires it (and clears the
+          // working line).
+          setTimeout(() => {
+            muxSend({ type: 'session/event', sessionId: SID, event: { type: 'turn/end', seq: 4, time: 0, data: { turn: 0 } } })
+          }, 150)
           value = { accepted: true }
           break
         }
@@ -834,12 +837,14 @@ test('ESC stops the running turn end to end', async () => {
     muxSend({ type: 'session/event', sessionId: 's1', event: { type: 'turn/start', seq: 3, time: 0, data: { turn: 0 } } })
     await waitForStdout(stdoutRef, 'Deep diving')
     await waitForStdout(stdoutRef, 'ESC stop turn')
-    // ESC stops the turn: the host sees session.cancel for the session.
+    // ESC stops the turn: the host sees session.cancel for the session, the
+    // 'Turn cancelled' notice paints in the header, and the delayed
+    // turn/end retires it and clears the working line (judge each row by
+    // its last write — old frames accumulate in the stream).
     child.stdin?.write('\u001b')
     await waitFor(() => cancelCalls.length === 1, 'session.cancel call')
     assert.equal(cancelCalls[0], 's1')
-    // The stub settles with turn/end: the working line clears (judge each
-    // row by its last write — old frames accumulate in the stream).
+    await waitForStdout(stdoutRef, '· Turn cancelled')
     await waitFor(() => {
       const segments: Array<{ row: number; text: string }> = []
       let row = 1
@@ -859,6 +864,21 @@ test('ESC stops the running turn end to end', async () => {
       }
       return ![...byRow.values()].some((text) => text.includes('Deep diving'))
     }, 'the working line clears after the cancel')
+    await waitFor(() => {
+      const segments: Array<{ row: number; text: string }> = []
+      let row = 1
+      let last = 0
+      const position = /\x1b\[(\d+);1H/g
+      for (let m = position.exec(stdoutRef.value); m !== null; m = position.exec(stdoutRef.value)) {
+        const text = stdoutRef.value.slice(last, m.index)
+        if (text !== '') segments.push({ row, text })
+        row = Number(m[1])
+        last = m.index + m[0].length
+      }
+      if (last < stdoutRef.value.length) segments.push({ row, text: stdoutRef.value.slice(last) })
+      const header = segments.filter((segment) => segment.row === 1).at(-1)
+      return header !== undefined && !header.text.includes('Turn cancelled')
+    }, 'the turn/end retires the Turn cancelled notice')
     child.stdin?.write('\u0003') // Ctrl+C
     const result = await done
     assert.equal(result.code, 0)
