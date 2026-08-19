@@ -128,17 +128,45 @@ test('block-end finalizes text and tool-call markers, images render [image]', ()
   ])
 })
 
-test('reasoning deltas and usage chunks are not displayed', () => {
+test('reasoning deltas render as a bounded thinking segment; usage stays hidden', () => {
   const state = projectEvents([
     chunk(1, 0, 0, { type: 'block-start', index: 0, blockType: 'reasoning' }),
     chunk(2, 0, 0, { type: 'reasoning-delta', index: 0, text: 'think think' }),
-    chunk(3, 0, 0, { type: 'block-end', index: 0, block: { type: 'reasoning', text: 'think think' } }),
-    chunk(4, 0, 0, { type: 'usage', usage: { inputTokens: 1, outputTokens: 2 } }),
-    chunk(5, 0, 0, { type: 'block-start', index: 1, blockType: 'text' }),
-    chunk(6, 0, 0, { type: 'text-delta', index: 1, text: 'visible' }),
+    chunk(3, 0, 0, { type: 'usage', usage: { inputTokens: 1, outputTokens: 2 } }),
+    chunk(4, 0, 0, { type: 'block-start', index: 1, blockType: 'text' }),
+    chunk(5, 0, 0, { type: 'text-delta', index: 1, text: 'visible' }),
   ])
-  assert.deepEqual(partialSegments(state.partial as never), [{ kind: 'text', text: 'visible' }])
-  assert.equal(state.lastSeq, 6)
+  assert.deepEqual(partialSegments(state.partial as never), [
+    { kind: 'reasoning', text: 'think think', truncated: false },
+    { kind: 'text', text: 'visible' },
+  ])
+  assert.equal(state.lastSeq, 5)
+})
+
+test('a long thinking chain is bounded with the truncated flag', () => {
+  const state = projectEvents([
+    chunk(1, 0, 0, { type: 'block-start', index: 0, blockType: 'reasoning' }),
+    chunk(2, 0, 0, { type: 'reasoning-delta', index: 0, text: `${'x'.repeat(30)}\n`.repeat(20) }),
+  ])
+  const segments = partialSegments(state.partial as never)
+  const reasoning = segments[0]
+  assert.equal(reasoning?.kind, 'reasoning')
+  if (reasoning?.kind === 'reasoning') {
+    assert.equal(reasoning.truncated, true)
+    assert.ok(reasoning.text.includes('… (thinking truncated)'), reasoning.text)
+    assert.equal(reasoning.text.split('\n').length, 9, 'eight lines plus the note')
+  }
+  // A finalized reasoning block becomes a reasoning row.
+  const finalized = projectEvents([
+    assistantMessage(1, 0, 0, [
+      { type: 'reasoning', text: 'deep thought' },
+      { type: 'text', text: 'answer' },
+    ]),
+  ])
+  assert.deepEqual(finalized.rows, [
+    { kind: 'reasoning', text: 'deep thought', truncated: false },
+    { kind: 'assistant', segments: [{ kind: 'text', text: 'answer' }] },
+  ])
 })
 
 test('a finalized assistant message replaces the matching partial without duplication', () => {

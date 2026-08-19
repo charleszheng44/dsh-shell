@@ -321,7 +321,13 @@ function startQueueHost(): Promise<{
           } } }] }
           break
         case 'session.history':
-          value = { events: [], hasMore: false }
+          value = { events: [
+            { event: { type: 'user/message', seq: 1, time: 0, surfaceOp: 'append', data: { id: 'm1', role: 'user', content: [{ type: 'text', text: 'hello' }], source: { kind: 'user' } } } },
+            { event: { type: 'assistant/message', seq: 2, time: 0, surfaceOp: 'append', data: { turn: 0, step: 0, message: { id: 'a1', role: 'assistant', content: [
+              { type: 'reasoning', text: 'think about it' },
+              { type: 'text', text: 'ok' },
+            ], source: { kind: 'model', provider: 'p' } } } } },
+          ], hasMore: false }
           break
         case 'session.updateQueue': {
           const itemId = parsed.payload?.itemId ?? ''
@@ -541,6 +547,9 @@ test('Ctrl+U pops the last queued message into the composer end to end', async (
     }, 'panel shrink and composer restore')
     // With the editor focused, pi's frame ends show the hardware cursor.
     assert.ok(stdoutRef.value.includes('\x1b[?25h'), 'hardware cursor is shown while focused')
+    // The thinking chain from history renders as its own block.
+    await waitForStdout(stdoutRef, '▍ Thinking')
+    await waitForStdout(stdoutRef, 'think about it')
     // The footer already shows the current model next to the context
     // usage, from the models catalog fetched at attach.
     await waitForStdout(stdoutRef, 'Provider One · Model One')

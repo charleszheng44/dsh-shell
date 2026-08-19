@@ -8,7 +8,7 @@ import { test } from 'node:test'
 
 import { Container, Markdown, getCapabilities, setCapabilities, visibleWidth as visibleWidthOf, type Component } from '@earendil-works/pi-tui'
 
-import { PickerFrame, TranscriptList, approvalCardText, assistantMarkdown, canEditQueued, deepDivingText, editorPolicy, editorTextAfterSubmit, footerHints, formatTokens, headerText, isWorking, neutralizeLinks, pickerLabel, questionCardText, queuedText, reconcileRows, sessionPickerItems, statsText, terminalSafeText, toolPreviewText } from '../src/ui.js'
+import { PickerFrame, TranscriptList, approvalCardText, assistantMarkdown, canEditQueued, deepDivingText, editorPolicy, editorTextAfterSubmit, footerHints, formatTokens, headerText, isWorking, neutralizeLinks, pickerLabel, questionCardText, queuedText, reasoningText, reconcileRows, sessionPickerItems, statsText, terminalSafeText, toolPreviewText } from '../src/ui.js'
 import type { TranscriptRow } from '../src/transcript.js'
 import { contextStyle } from '../src/theme.js'
 
@@ -545,6 +545,15 @@ test('canEditQueued gates Ctrl+U on state, overlay, and reentry', () => {
   assert.equal(canEditQueued({ connection: 'connecting', attachment: attached } as never, false, false), false)
 })
 
+test('reasoningText renders the thinking block with indented lines', () => {
+  const plain = reasoningText('think one\nthink two', false)
+  assert.ok(plain.includes('▍ Thinking'), plain)
+  assert.ok(plain.includes('    think one'), plain)
+  assert.ok(plain.includes('    think two'), plain)
+  const truncated = reasoningText('think', true)
+  assert.ok(truncated.includes('… (thinking truncated)'), truncated)
+})
+
 test('approvalCardText names the tool, reason, and answer keys', () => {
   const plain = approvalCardText({ rpcId: 'r' as never, approvalId: 'a1', toolName: 'bash' })
   assert.ok(plain.includes('Approval: Bash'), plain)
@@ -665,6 +674,17 @@ test('reconcileRows removes dropped components when the transcript shrinks', () 
   // Shrink: switching sessions must remove the old rows' components.
   reconcileRows(container, cache as never, [])
   assert.equal(container.children.length, 0)
+})
+
+test('reasoning rows render as a dim italic thinking block', () => {
+  const container = new Container()
+  const cache: Array<{ row: TranscriptRow; component: unknown }> = []
+  reconcileRows(container, cache as never, [{ kind: 'reasoning', text: 'deep thought', truncated: false }] as never)
+  const lines = (container.children[0] as { render(width: number): string[] }).render(40).join('\n')
+  assert.ok(lines.includes('▍ Thinking'), lines)
+  assert.ok(lines.includes('deep thought'), lines)
+  assert.ok(lines.includes('\x1b[3m'), 'italic style')
+  assert.ok(!lines.includes('\x1b[48;'), 'no background')
 })
 
 test('tool rows render the call header plain and the result corner-prefixed', () => {

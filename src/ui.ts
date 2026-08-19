@@ -41,6 +41,7 @@ import {
   pickerPanelStyle,
   pickerTitleStyle,
   questionBoxBg,
+  reasoningStyle,
   toolDisplayName,
   toolDotStyle,
   toolOutputStyle,
@@ -422,10 +423,22 @@ function rowComponent(row: TranscriptRow): Component {
     })
     return new Text(lines.join('\n'), 0, 0)
   }
+  if (row.kind === 'reasoning') {
+    // The thinking chain: a dim italic block with a label, bounded like
+    // tool output so one verbose reasoning step cannot dominate.
+    return new Text(reasoningStyle(terminalSafeText(reasoningText(row.text, row.truncated))), 0, 0)
+  }
   return new HStack([
     { component: new Text(assistantMarker(), 0, 0), basis: 3, grow: 0 },
     { component: new Markdown(terminalSafeText(assistantMarkdown(row.segments)), 1, 0, markdownTheme), basis: 'auto', grow: 1 },
   ])
+}
+
+/** The thinking chain's display format: a labeled block with the content
+ *  indented under it; the truncation note names the bound. */
+export function reasoningText(text: string, truncated: boolean): string {
+  const body = truncated ? `${text}\n… (thinking truncated)` : text
+  return `▍ Thinking\n${body.split('\n').map((line) => `    ${line}`).join('\n')}`
 }
 
 /** Bounded tool-output preview: pi shows the first 10 lines of a result with
@@ -462,6 +475,8 @@ export class TerminalView implements AppView {
     { component: new Text(assistantMarker(), 0, 0), basis: 3, grow: 0 },
     { component: this.partial, basis: 'auto', grow: 1 },
   ])
+  /** In-flight thinking chain, rendered above the markdown partial. */
+  private readonly partialReasoning = new Text('', 0, 0)
   /** "Deep diving..." turn-status line, rendered at the tail of the transcript
    *  (where the answer will stream in), like the Web UI's turn status. Empty
    *  Texts render zero rows, so idle layouts keep no slot. */
@@ -812,12 +827,30 @@ export class TerminalView implements AppView {
     }
     // The live partial updates in place (single Markdown component) and stays
     // after every finalized row; the assistant marker column is added only
-    // while there is in-flight content to show.
+    // while there is in-flight content to show. The thinking chain renders
+    // above it in its own dim italic block.
     if (attachment.phase === 'attached' && attachment.partial !== undefined) {
-      this.partial.setText(terminalSafeText(assistantMarkdown(partialSegments(attachment.partial))))
-      transients.push(this.partialRow)
+      const segments = partialSegments(attachment.partial)
+      const reasoning = segments.filter((segment) => segment.kind === 'reasoning')
+      const visible = segments.filter((segment) => segment.kind !== 'reasoning')
+      if (reasoning.length > 0) {
+        const last = reasoning.at(-1)
+        const text = reasoning.map((segment) => segment.kind === 'reasoning' ? segment.text : '').join('\n')
+        const truncated = last?.kind === 'reasoning' ? last.truncated : false
+        this.partialReasoning.setText(terminalSafeText(reasoningText(text, truncated)))
+        transients.push(this.partialReasoning)
+      } else {
+        this.partialReasoning.setText('')
+      }
+      if (visible.length > 0) {
+        this.partial.setText(terminalSafeText(assistantMarkdown(visible)))
+        transients.push(this.partialRow)
+      } else {
+        this.partial.setText('')
+      }
     } else {
       this.partial.setText('')
+      this.partialReasoning.setText('')
     }
     // An open host approval renders as a boxed card at the transcript tail,
     // answered with Ctrl+A / Ctrl+R until approval/resolved settles it.

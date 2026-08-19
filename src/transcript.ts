@@ -5,17 +5,20 @@
  * advances the sequence watermark, but only append-origin user/assistant
  * messages may create finalized rows, and assistant chunks accumulate visible
  * text per block index so an unfinished response renders as a partial.
- * Reasoning, usage, and tool-argument deltas are deliberately not displayed;
- * unknown events and block kinds advance the watermark without rendering.
+ * The thinking chain (reasoning-delta chunks / reasoning blocks) renders as
+ * its own bounded row; usage and tool-argument deltas are deliberately not
+ * displayed; unknown events and block kinds advance the watermark without
+ * rendering.
  */
 
 import type { SessionEvent } from '@deepseek-ai/dsh-session/types'
 import type { StreamChunk } from '@deepseek-ai/dsh-llm/types'
 
-/** One visible piece of assistant output: text, a tool call with its input,
- *  or an image. */
+/** One visible piece of assistant output: text, the thinking chain, a tool
+ *  call with its input, or an image. */
 export type AssistantSegment =
   | { kind: 'text'; text: string }
+  | { kind: 'reasoning'; text: string; truncated: boolean }
   | { kind: 'tool'; name: string; args?: string }
   | { kind: 'image' }
 
@@ -23,6 +26,7 @@ export type AssistantSegment =
 export type TranscriptRow =
   | { kind: 'user'; text: string }
   | { kind: 'assistant'; segments: readonly AssistantSegment[] }
+  | { kind: 'reasoning'; text: string; truncated: boolean }
   | { kind: 'toolCall'; name: string; args?: string }
   | { kind: 'toolResult'; name: string; output: string; truncated: boolean; error: boolean }
 
@@ -70,6 +74,9 @@ export function partialSegments(partial: PartialAssistant): readonly AssistantSe
     if (block === undefined) continue
     if (block.final !== undefined) {
       segments.push(block.final)
+    } else if (block.type === 'reasoning' && block.text !== '') {
+      const bounded = truncateReasoning(block.text)
+      segments.push({ kind: 'reasoning', text: bounded.text, truncated: bounded.truncated })
     } else if (block.type === 'text' && block.text !== '') {
       segments.push({ kind: 'text', text: block.text })
     } else if (block.type === undefined && block.text !== '') {
@@ -95,6 +102,30 @@ const TOOL_OUTPUT_MAX_CHARS = 4000
 function compactToolArgs(args: string): string {
   const oneLine = args.replace(/\s+/g, ' ').trim()
   return oneLine.length > TOOL_ARGS_MAX ? `${oneLine.slice(0, TOOL_ARGS_MAX)}…` : oneLine
+}
+
+/** Bounds for one displayed thinking chain: the reasoning of one step is
+ *  usually long, and the transcript must not balloon. */
+const REASONING_MAX_LINES = 8
+const REASONING_MAX_CHARS = 2000
+
+/** Bound a thinking chain like tool output: characters first, then lines,
+ *  with the `truncated` flag travelling with the segment/row. */
+function truncateReasoning(text: string): { text: string; truncated: boolean } {
+  if (text.length > REASONING_MAX_CHARS) {
+    return {
+      text: `${text.slice(0, REASONING_MAX_CHARS)}… (thinking truncated)`,
+      truncated: true,
+    }
+  }
+  const lines = text.split('\n')
+  if (lines.length > REASONING_MAX_LINES) {
+    return {
+      text: `${lines.slice(0, REASONING_MAX_LINES).join('\n')}\n… (thinking truncated)`,
+      truncated: true,
+    }
+  }
+  return { text, truncated: false }
 }
 
 /** Bound a tool output so a verbose result cannot dominate the transcript.
@@ -124,7 +155,13 @@ function rowsFromSegments(segments: readonly AssistantSegment[]): readonly Trans
   const rows: TranscriptRow[] = []
   let textRun: AssistantSegment[] = []
   for (const segment of segments) {
-    if (segment.kind === 'tool') {
+    if (segment.kind === 'reasoning') {
+      if (textRun.length > 0) {
+        rows.push({ kind: 'assistant', segments: textRun })
+        textRun = []
+      }
+      rows.push({ kind: 'reasoning', text: segment.text, truncated: segment.truncated })
+    } else if (segment.kind === 'tool') {
       if (textRun.length > 0) {
         rows.push({ kind: 'assistant', segments: textRun })
         textRun = []
@@ -278,6 +315,13 @@ function updateBlocks(blocks: Map<number, PartialBlock>, chunk: StreamChunk): Re
     // disconnect the client).
     if (text.length > MAX_BLOCK_TEXT_BYTES) return blocks
     blocks.set(chunk.index, { ...current, text })
+  } else if (chunk.type === 'reasoning-delta') {
+    // The thinking chain accumulates like text, in its own block.
+    const current = blocks.get(chunk.index) ?? { type: 'reasoning', text: '', final: undefined }
+    if (current.final !== undefined) return blocks
+    const text = current.text + chunk.text
+    if (text.length > MAX_BLOCK_TEXT_BYTES) return blocks
+    blocks.set(chunk.index, { ...current, text })
   } else if (chunk.type === 'block-end') {
     const block = chunk.block
     const current = blocks.get(chunk.index) ?? { type: block.type, text: '', final: undefined }
@@ -287,7 +331,7 @@ function updateBlocks(blocks: Map<number, PartialBlock>, chunk: StreamChunk): Re
       final: segmentFromBlock(block.type, block),
     })
   }
-  // reasoning-delta, tool-call-delta, usage, finish: deliberately not displayed.
+  // tool-call-delta, usage, finish: deliberately not displayed.
   return blocks
 }
 
@@ -304,6 +348,12 @@ function segmentFromBlock(type: string, block: unknown): AssistantSegment | unde
     // An empty argument object is display noise; skip it.
     const args = compact !== undefined && compact !== '' && compact !== '{}' && compact !== '[]' ? compact : undefined
     return args === undefined ? { kind: 'tool', name } : { kind: 'tool', name, args }
+  }
+  if (type === 'reasoning') {
+    const text = (block as { text?: string }).text
+    if (text === undefined || text === '') return undefined
+    const bounded = truncateReasoning(text)
+    return { kind: 'reasoning', text: bounded.text, truncated: bounded.truncated }
   }
   if (type === 'image') return { kind: 'image' }
   return undefined

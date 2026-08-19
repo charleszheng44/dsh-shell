@@ -174,6 +174,9 @@ export const toolTitleStyle = (text: string): string => bold(mistText(text))
 /** Tool output: the reference's subtle blue-gray (muted). */
 export const toolOutputStyle = (text: string): string => mistSubtle(text)
 
+/** Thinking chain: the model's reasoning in the subtle blue-gray, italic. */
+export const reasoningStyle = (text: string): string => italic(mistSubtle(text))
+
 /** Tool result text: neutral light grey, Codex-style — the reference's
  *  blue-gray (#5e6673) has green above red and can read as greenish-grey on
  *  the canvas; the output block should be grey on grey. */
