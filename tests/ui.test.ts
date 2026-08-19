@@ -8,7 +8,7 @@ import { test } from 'node:test'
 
 import { Container, Markdown, getCapabilities, setCapabilities, visibleWidth as visibleWidthOf, type Component } from '@earendil-works/pi-tui'
 
-import { PickerFrame, TranscriptList, assistantMarkdown, canEditQueued, deepDivingText, editorPolicy, editorTextAfterSubmit, footerHints, formatTokens, headerText, isWorking, neutralizeLinks, pickerLabel, questionCardText, queuedText, reconcileRows, sessionPickerItems, statsText, terminalSafeText, toolPreviewText } from '../src/ui.js'
+import { PickerFrame, TranscriptList, approvalCardText, assistantMarkdown, canEditQueued, deepDivingText, editorPolicy, editorTextAfterSubmit, footerHints, formatTokens, headerText, isWorking, neutralizeLinks, pickerLabel, questionCardText, queuedText, reconcileRows, sessionPickerItems, statsText, terminalSafeText, toolPreviewText } from '../src/ui.js'
 import type { TranscriptRow } from '../src/transcript.js'
 import { contextStyle } from '../src/theme.js'
 
@@ -541,6 +541,17 @@ test('canEditQueued gates Ctrl+U on state, overlay, and reentry', () => {
   assert.equal(canEditQueued({ connection: 'connecting', attachment: attached } as never, false, false), false)
 })
 
+test('approvalCardText names the tool, reason, and answer keys', () => {
+  const plain = approvalCardText({ rpcId: 'r' as never, approvalId: 'a1', toolName: 'bash' })
+  assert.ok(plain.includes('Approval: Bash'), plain)
+  assert.ok(plain.includes('Ctrl+A allow once'), plain)
+  assert.ok(plain.includes('Ctrl+R reject'), plain)
+  // The reason is flattened and sanitized.
+  const withReason = approvalCardText({ rpcId: 'r' as never, approvalId: 'a2', toolName: 'run_code', reason: 'multi\nline \x1b[31mreason' })
+  assert.ok(withReason.includes('multi line reason'), withReason)
+  assert.ok(!withReason.includes('\x1b[31m'), withReason)
+})
+
 test('questionCardText renders the question and its numbered options', () => {
   const text = questionCardText([
     { id: 'qa', question: 'Approve the change?', options: [{ label: 'Yes' }, { label: 'No' }] },
@@ -570,10 +581,15 @@ test('questionCardText renders the question and its numbered options', () => {
 
 test('footerHints switches to answering mode while a question is open', () => {
   assert.ok(footerHints({ phase: 'none' } as never).includes('Enter send'))
-  assert.ok(footerHints({ phase: 'attached', pendingQuestions: [] } as never).includes('Enter send'))
-  const answering = footerHints({ phase: 'attached', pendingQuestions: [{ rpcId: 'r', questions: [] }] } as never)
+  assert.ok(footerHints({ phase: 'attached', pendingQuestions: [], pendingApprovals: [] } as never).includes('Enter send'))
+  const answering = footerHints({ phase: 'attached', pendingQuestions: [{ rpcId: 'r', questions: [] }], pendingApprovals: [] } as never)
   assert.ok(answering.includes('Answer:'), answering)
   assert.ok(!answering.includes('Enter send'), answering)
+  // While an approval is pending the Ctrl+A/Ctrl+R keys are advertised.
+  const approving = footerHints({ phase: 'attached', pendingQuestions: [], pendingApprovals: [{ rpcId: 'r', approvalId: 'a1', toolName: 'bash' }] } as never)
+  assert.ok(approving.includes('Ctrl+A allow once'), approving)
+  assert.ok(approving.includes('Ctrl+M model'), approving)
+  assert.ok(!approving.includes('Answer:'), approving)
 })
 
 test('sessionPickerItems renders a notice row for an empty project', () => {

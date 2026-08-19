@@ -143,16 +143,25 @@ export async function main(argv: readonly string[]): Promise<number> {
 
   let submit: (text: string) => Promise<import('./app.js').SubmitResult> = async () => ({ ok: false, reason: 'not-attached' })
   let editQueued: () => Promise<string | undefined> = async () => undefined
+  let model: () => void = () => {}
+  let approve: (approvalId: string) => void = () => {}
+  let reject: (approvalId: string) => void = () => {}
   const view = new TerminalView(
     () => { void app.openProjectPicker() },
     () => { void app.openSessionPicker() },
     () => { shutdown(0) },
     (text) => submit(text),
     () => editQueued(),
+    () => model(),
+    (approvalId) => approve(approvalId),
+    (approvalId) => reject(approvalId),
   )
   const app = new App(createDshPort(new NodeApiClient(origin)), view, controller.signal)
   submit = (text) => app.submit(text)
   editQueued = () => app.editQueuedItem()
+  model = () => { void app.openModelPicker() }
+  approve = (approvalId) => { void app.answerApproval(approvalId, 'allowed-once') }
+  reject = (approvalId) => { void app.answerApproval(approvalId, 'rejected') }
 
   const shutdown = createLifecycle({
     abort: () => controller.abort(),

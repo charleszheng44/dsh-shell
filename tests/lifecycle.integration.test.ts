@@ -272,14 +272,20 @@ function startQueueHost(): Promise<{
   server: Server
   origin: string
   updateQueueCalls: Array<{ sessionId: string; itemId: string; action: unknown }>
+  respondBodies: Array<{ type: string; rpcId: string; result: unknown }>
+  selectModelCalls: unknown[]
+  promptCalls: unknown[]
 }> {
   const updateQueueCalls: Array<{ sessionId: string; itemId: string; action: unknown }> = []
+  const respondBodies: Array<{ type: string; rpcId: string; result: unknown }> = []
+  const selectModelCalls: unknown[] = []
+  const promptCalls: unknown[] = []
   const SID = 's1'
   const queue = [
     { id: 'msg-1', placement: 'queued', message: { id: 'msg-1', role: 'user', content: [{ type: 'text', text: 'fix the parser' }], source: { kind: 'user' } } },
     { id: 'msg-2', placement: 'queued', message: { id: 'msg-2', role: 'user', content: [{ type: 'text', text: 'run the tests' }], source: { kind: 'user' } } },
   ]
-  let muxSend: (payload: unknown) => void = () => {}
+  let muxSend: (payload: unknown, rpcId?: string) => void = () => {}
   const pushQueueSnapshot = (): void => {
     muxSend({ type: 'session/queue', sessionId: SID, items: queue.map((item) => ({ ...item })) })
   }
@@ -287,7 +293,16 @@ function startQueueHost(): Promise<{
     let body = ''
     req.on('data', (chunk: Buffer) => { body += chunk.toString() })
     req.on('end', () => {
-      let parsed: { method?: string; rpcId?: string; payload?: { sessionId?: string; itemId?: string; action?: unknown } } = {}
+      if (req.url === '/api/respond') {
+        const message = JSON.parse(body) as { type: string; rpcId: string; result: unknown }
+        respondBodies.push(message)
+        res.writeHead(200, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ accepted: true }))
+        // Settle the approval so the card clears.
+        muxSend({ type: 'approval/resolved', sessionId: SID, approvalId: 'appr-e2e', outcome: 'allowed-once' })
+        return
+      }
+      let parsed: { method?: string; rpcId?: string; payload?: { sessionId?: string; itemId?: string; action?: unknown; provider?: string; model?: string } } = {}
       try { parsed = JSON.parse(body) as typeof parsed } catch { /* fall through */ }
       const method = parsed.method ?? ''
       let value: unknown
@@ -314,6 +329,31 @@ function startQueueHost(): Promise<{
           }
           pushQueueSnapshot()
           value = { accepted: true }
+          break
+        }
+        case 'session.prompt': {
+          promptCalls.push(parsed.payload)
+          value = { accepted: true }
+          break
+        }
+        case 'session.models':
+          value = {
+            current: { provider: 'p1', model: 'm1' },
+            routable: true,
+            groups: [{
+              id: 'p1',
+              name: 'Provider One',
+              models: [
+                { id: 'm1', name: 'Model One' },
+                { id: 'm2', name: 'Model Two', reasoning: { efforts: [{ id: 'low', name: 'Low' }], defaultEffort: 'low' } },
+              ],
+            }],
+            failures: [],
+          }
+          break
+        case 'session.selectModel': {
+          selectModelCalls.push(parsed.payload)
+          value = { selected: { provider: parsed.payload?.provider ?? '', model: parsed.payload?.model ?? '' } }
           break
         }
         default:
@@ -348,10 +388,10 @@ function startQueueHost(): Promise<{
       + 'Connection: Upgrade\r\n'
       + `Sec-WebSocket-Accept: ${accept}\r\n\r\n`,
     )
-    muxSend = (payload: unknown): void => {
+    muxSend = (payload: unknown, rpcId = 'stub-mux'): void => {
       const message = JSON.stringify({
         type: 'server-request',
-        rpcId: 'stub-mux',
+        rpcId,
         method: 'events.mux',
         payload,
       })
@@ -369,8 +409,15 @@ function startQueueHost(): Promise<{
     }
     muxSend({ type: 'session/subscribed', sessionId: SID, lastSeq: 0 })
     // The queue snapshot replays on open; the client caches it and seeds
-    // the attachment when the user attaches.
+    // the attachment when the user attaches. An approval ask rides along.
     pushQueueSnapshot()
+    muxSend({
+      type: 'approval/requested',
+      sessionId: SID,
+      approvalId: 'appr-e2e',
+      toolName: 'bash',
+      reason: 'run the tests',
+    }, 'rpc-appr-e2e')
     socket.on('data', (chunk: Buffer) => {
       const first = chunk[0]
       if (chunk.length >= 2 && first !== undefined && (first & 0x0f) === 0x8) {
@@ -383,7 +430,7 @@ function startQueueHost(): Promise<{
   return new Promise((resolve) => {
     server.listen(0, '127.0.0.1', () => {
       const address = server.address() as AddressInfo
-      resolve({ server, origin: `http://127.0.0.1:${address.port}`, updateQueueCalls })
+      resolve({ server, origin: `http://127.0.0.1:${address.port}`, updateQueueCalls, respondBodies, selectModelCalls, promptCalls })
     })
   })
 }
@@ -399,7 +446,7 @@ async function waitFor(predicate: () => boolean, label: string, timeoutMs = 5000
 }
 
 test('Ctrl+U pops the last queued message into the composer end to end', async () => {
-  const { server, origin, updateQueueCalls } = await startQueueHost()
+  const { server, origin, updateQueueCalls, respondBodies, selectModelCalls, promptCalls } = await startQueueHost()
   let child: ChildProcess | undefined
   try {
     const spawned = runCli(['--host', origin])
@@ -439,34 +486,87 @@ test('Ctrl+U pops the last queued message into the composer end to end', async (
       return parts.at(-1) ?? ''
     }
     await waitFor(() => {
-      const rows = stdoutRef.value.replace(/\x1b\[\d+;\d*H/g, '\n').split('\n')
-      const editorRestored = rows.some((row) => {
-        const last = lastWrite(row)
-        // The composer row carries the Codex-style "> " prompt prefix.
-        return last.includes('\u276f ') && last.includes('run the tests') && !last.includes('↳')
+      // Split the accumulated stdout into row segments: pi writes every row
+      // with \x1b[{row};1H\x1b[2K, so each segment knows its terminal row
+      // (stream adjacency is not screen adjacency — pi skips unchanged rows).
+      const segments: Array<{ row: number; text: string }> = []
+      let row = 1
+      let last = 0
+      const position = /\x1b\[(\d+);1H/g
+      for (let m = position.exec(stdoutRef.value); m !== null; m = position.exec(stdoutRef.value)) {
+        const text = stdoutRef.value.slice(last, m.index)
+        if (text !== '') segments.push({ row, text })
+        row = Number(m[1])
+        last = m.index + m[0].length
+      }
+      if (last < stdoutRef.value.length) segments.push({ row, text: stdoutRef.value.slice(last) })
+      const lastWrite = (text: string): string => {
+        const parts = text.split('\x1b[2K')
+        return parts.at(-1) ?? ''
+      }
+      const plain = (text: string): string => lastWrite(text).replace(/\x1b\[[0-9;]*m|\x1b\]8;;\x07/g, '')
+      // The composer row: the last segment carrying the ❯ prompt and the
+      // popped text, with no ↳ (the queue rows carry the prefix).
+      let composerRow = -1
+      for (let index = segments.length - 1; index >= 0; index -= 1) {
+        const segment = segments[index]
+        if (segment !== undefined) {
+          const lastSeg = lastWrite(segment.text)
+          if (lastSeg.includes('\u276f ') && lastSeg.includes('run the tests') && !lastSeg.includes('↳')) {
+            composerRow = segment.row
+            break
+          }
+        }
+      }
+      if (composerRow === -1) return false
+      // The top border corner sits on the row directly above the composer:
+      // no blank margin rows inside the box.
+      const topBorder = segments.some((segment) => segment.row === composerRow - 1 && plain(segment.text).startsWith('───'))
+      const borderAtLeft = segments.some((segment) => plain(segment.text).startsWith('───'))
+      // The queue panel sits above the input box.
+      const panelRow = segments.filter((segment) => lastWrite(segment.text).includes('fix the parser')).at(-1)?.row ?? -1
+      // The panel's final state shows the surviving item without the removed
+      // one; the composer row carries the popped text.
+      const panelFinal = segments.some((segment) => {
+        const lastSeg = lastWrite(segment.text)
+        return lastSeg.includes('fix the parser') && !lastSeg.includes('↳ run the tests')
       })
-      const panelFinal = rows.some((row) => {
-        const last = lastWrite(row)
-        return last.includes('fix the parser') && !last.includes('↳ run the tests')
-      })
-      const borderAtLeft = rows.some((row) => {
-        // The composer's border rules run from column 0 (the old layout's
-        // prefix blank rows left the box open at the left).
-        const last = lastWrite(row)
-        return /^\x1b\[[0-9;]*m─{3,}/.test(last)
-      })
-      // The queue panel sits ABOVE the input box: the panel row's index is
-      // smaller than the composer row's.
-      const panelIdx = rows.findIndex((row) => lastWrite(row).includes('fix the parser'))
-      const composerIdx = rows.findIndex((row) => {
-        const last = lastWrite(row)
-        return last.includes('\u276f ') && last.includes('run the tests')
-      })
-      return editorRestored && panelFinal && borderAtLeft
-        && panelIdx !== -1 && composerIdx !== -1 && panelIdx < composerIdx
+      return topBorder && borderAtLeft && panelFinal
+        && panelRow !== -1 && panelRow < composerRow
     }, 'panel shrink and composer restore')
     // With the editor focused, pi's frame ends show the hardware cursor.
     assert.ok(stdoutRef.value.includes('\x1b[?25h'), 'hardware cursor is shown while focused')
+    // Ctrl+M (the disambiguated kitty CSI-u form — plain Enter must not
+    // open the picker) lists the models; Enter selects the first model and
+    // applies it without a reasoning effort.
+    child.stdin?.write('\x1b[109;5u')
+    await waitForStdout(stdoutRef, 'Select model')
+    child.stdin?.write('\r')
+    await waitFor(() => selectModelCalls.length === 1, 'selectModel call')
+    assert.deepEqual(selectModelCalls[0], { sessionId: 's1', provider: 'p1', model: 'm1' })
+    // Plain Enter still submits from the composer (regression: Ctrl+M and
+    // Enter share the CR byte in legacy terminals). Clear the popped text
+    // first, then type and submit.
+    child.stdin?.write('\x7f'.repeat(14))
+    child.stdin?.write('hello')
+    child.stdin?.write('\r')
+    await waitFor(() => promptCalls.length === 1, 'prompt call')
+    assert.deepEqual(promptCalls[0], {
+      sessionId: 's1',
+      mode: 'queue',
+      content: [{ type: 'text', text: 'hello' }],
+    })
+    // The host's approval ask renders as a card; Ctrl+A answers it by
+    // echoing the frame's rpcId with the allowed-once outcome.
+    await waitForStdout(stdoutRef, 'Approval: Bash')
+    child.stdin?.write('\u0001') // Ctrl+A
+    await waitFor(() => respondBodies.length === 1, 'approval response')
+    const approval = respondBodies[0]
+    assert.equal(approval?.rpcId, 'rpc-appr-e2e')
+    assert.deepEqual(approval?.result, {
+      ok: true,
+      value: { sessionId: 's1', approvalId: 'appr-e2e', outcome: 'allowed-once' },
+    })
     // The software blink must cycle on -> off -> on: only the 530ms timer
     // can hide the cursor again after a focused frame showed it. Poll so a
     // full half-second cycle has time to elapse.

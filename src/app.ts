@@ -17,7 +17,7 @@ import type { SessionSummary, WorkspaceId, WorkspaceView } from '@deepseek-ai/ds
 // SessionSummary.projections.values.title is typed; type-only, no runtime cost.
 import type {} from '@deepseek-ai/dsh-session-title/types'
 
-import type { MuxFrame, QueuedInboxItem, RpcId } from '@deepseek-ai/dsh-host-apiproxy/api'
+import type { ModelReasoning, MuxFrame, QueuedInboxItem, RpcId } from '@deepseek-ai/dsh-host-apiproxy/api'
 
 import type { DshPort, HostDescription } from './dsh.js'
 import { applyEvent, projectEvents, type PartialAssistant, type TranscriptRow } from './transcript.js'
@@ -66,6 +66,27 @@ export interface PendingQuestion {
   questions: readonly QuestionItem[]
 }
 
+/** A pending approval request from the host, keyed by its echoed rpcId. */
+export interface PendingApproval {
+  rpcId: RpcId
+  approvalId: string
+  toolName: string
+  callId?: string
+  reason?: string
+}
+
+/** One selectable model (or, with effortId, one reasoning effort) row. */
+export interface ModelChoice {
+  provider: string
+  model: string
+  name: string
+  description?: string
+  /** Present when this row chooses a reasoning effort. */
+  effortId?: string
+  /** Exact-route reasoning metadata when the model exposes efforts. */
+  reasoning?: ModelReasoning
+}
+
 /**
  * Attachment lifecycle. `buffered` collects stream frames while history is
  * loading (PR 3); PR 2 fills it with nothing and attaches from history alone.
@@ -101,6 +122,9 @@ export type AttachmentState =
       /** Open question requests from the host (question/requested frames not
        *  yet settled by question/resolved). */
       pendingQuestions: readonly PendingQuestion[]
+      /** Open approval requests from the host (approval/requested frames not
+       *  yet settled by approval/resolved). */
+      pendingApprovals: readonly PendingApproval[]
     }
 
 /** Complete UI state, rendered by the view on every change. */
@@ -118,6 +142,7 @@ export interface AppView {
   render(state: AppState): void
   openProjectPicker(rows: readonly ProjectRow[], onSelect: (row: ProjectRow) => void, onCancel: () => void): void
   openSessionPicker(rows: readonly SessionRow[], onSelect: (row: SessionRow) => void, onCancel: () => void): void
+  openModelPicker(choices: readonly ModelChoice[], onSelect: (choice: ModelChoice) => void, onCancel: () => void): void
   closePicker(): void
   stop(): void
 }
@@ -444,6 +469,34 @@ export class App {
       if (this.state.notice === 'Answered') this.setState({ notice: undefined })
       return
     }
+    if (frame.type === 'approval/requested') {
+      if (frame.rpcId === undefined) return
+      const pending: PendingApproval = {
+        rpcId: frame.rpcId,
+        approvalId: String(frame.approvalId),
+        toolName: frame.toolName,
+        ...(frame.callId === undefined ? {} : { callId: frame.callId }),
+        ...(frame.reason === undefined ? {} : { reason: frame.reason }),
+      }
+      this.updateInbox(frame.sessionId, (entry) => {
+        // Dedupe by approvalId (the audit correlation): a mux replay of the
+        // same ask carries the same approvalId with a fresh rpcId, and the
+        // resolved frame settles by approvalId too.
+        if (entry.approvals.some((approval) => approval.approvalId === pending.approvalId)) return entry
+        // The host settles sequentially, so a flood must keep the oldest
+        // entries, or the early asks become unreachable.
+        const approvals = [...entry.approvals, pending]
+        return { ...entry, approvals: approvals.slice(0, MAX_PENDING_APPROVALS) }
+      })
+      return
+    }
+    if (frame.type === 'approval/resolved') {
+      this.updateInbox(frame.sessionId, (entry) => ({
+        ...entry,
+        approvals: entry.approvals.filter((approval) => approval.approvalId !== String(frame.approvalId)),
+      }))
+      return
+    }
     if (frame.type !== 'session/event') return
     const attachment = this.state.attachment
     if (attachment.phase === 'none' || attachment.sessionId !== frame.sessionId) return
@@ -506,18 +559,25 @@ export class App {
    *  snapshots prune the cache entry. */
   private updateInbox(
     sessionId: SessionId,
-    update: (entry: { queue: readonly QueuedInboxItem[]; questions: readonly PendingQuestion[] }) => { queue: readonly QueuedInboxItem[]; questions: readonly PendingQuestion[] },
+    update: (entry: { queue: readonly QueuedInboxItem[]; questions: readonly PendingQuestion[]; approvals: readonly PendingApproval[] }) => { queue: readonly QueuedInboxItem[]; questions: readonly PendingQuestion[]; approvals: readonly PendingApproval[] },
   ): void {
     const key = String(sessionId)
-    const entry = update(this.inbox.get(key) ?? { queue: [], questions: [] })
-    if (entry.queue.length === 0 && entry.questions.length === 0) {
+    const entry = update(this.inbox.get(key) ?? { queue: [], questions: [], approvals: [] })
+    if (entry.queue.length === 0 && entry.questions.length === 0 && entry.approvals.length === 0) {
       this.inbox.delete(key)
     } else {
       this.inbox.set(key, entry)
     }
     const attachment = this.state.attachment
     if (attachment.phase === 'attached' && String(attachment.sessionId) === key) {
-      this.setState({ attachment: { ...attachment, queue: entry.queue, pendingQuestions: entry.questions } })
+      this.setState({
+        attachment: {
+          ...attachment,
+          queue: entry.queue,
+          pendingQuestions: entry.questions,
+          pendingApprovals: entry.approvals,
+        },
+      })
     }
   }
 
@@ -590,7 +650,11 @@ export class App {
   /** Transient inbox state cached per session from mux replays and updates:
    *  queue and question frames can arrive before the user attaches (the host
    *  replays them on stream open), and the attachment seeds from this cache. */
-  private inbox = new Map<string, { queue: readonly QueuedInboxItem[]; questions: readonly PendingQuestion[] }>()
+  private inbox = new Map<string, {
+    queue: readonly QueuedInboxItem[]
+    questions: readonly PendingQuestion[]
+    approvals: readonly PendingApproval[]
+  }>()
 
   /** Ctrl+P: open the project picker (refreshes both lists first). */
   async openProjectPicker(): Promise<void> {
@@ -728,9 +792,11 @@ export class App {
         pendingTools,
         turnActive,
         stats,
-        // Pre-attach queue/question frames (mux replay) seed the attachment.
+        // Pre-attach queue/question/approval frames (mux replay) seed the
+        // attachment.
         queue: this.inbox.get(String(sessionId))?.queue ?? [],
         pendingQuestions: this.inbox.get(String(sessionId))?.questions ?? [],
+        pendingApprovals: this.inbox.get(String(sessionId))?.approvals ?? [],
       },
       notice: undefined,
     })
@@ -872,6 +938,142 @@ export class App {
     return { ok: true }
   }
 
+  /** Answer the first pending approval with the given outcome
+   *  ('allowed-once' or 'rejected'): echo the request's rpcId on
+   *  /api/respond with the approval payload. */
+  async answerApproval(approvalId: string, outcome: 'allowed-once' | 'rejected'): Promise<void> {
+    const attachment = this.state.attachment
+    if (this.closed || this.state.connection !== 'connected' || attachment.phase !== 'attached') return
+    const pending = attachment.pendingApprovals.find((approval) => approval.approvalId === approvalId)
+    if (pending === undefined) return
+    const sessionId = attachment.sessionId
+    const generation = attachment.generation
+    const receipt = await this.port.respond({
+      type: 'client-response',
+      rpcId: pending.rpcId,
+      result: { ok: true, value: { sessionId, approvalId, outcome } },
+    }, this.signal)
+    const current = this.state.attachment
+    if (this.closed
+      || this.state.connection !== 'connected'
+      || current.phase !== 'attached'
+      || current.sessionId !== sessionId
+      || current.generation !== generation) {
+      return
+    }
+    if (!receipt.accepted) {
+      this.setState({ notice: receipt.reason === 'not-pending' ? 'Approval already decided' : 'Approval not accepted' })
+      return
+    }
+    // The host settles with approval/resolved; drop the pending entry now so
+    // the card clears immediately, and keep the cache in step.
+    const remaining = current.pendingApprovals.filter((approval) => approval.approvalId !== approvalId)
+    this.setState({ attachment: { ...current, pendingApprovals: remaining } })
+    const cached = this.inbox.get(String(sessionId))
+    if (cached !== undefined) {
+      const approvals = cached.approvals.filter((approval) => approval.approvalId !== approvalId)
+      if (approvals.length === 0 && cached.queue.length === 0 && cached.questions.length === 0) {
+        this.inbox.delete(String(sessionId))
+      } else {
+        this.inbox.set(String(sessionId), { ...cached, approvals })
+      }
+    }
+  }
+
+  /** Ctrl+M: open the model picker for the attached session. Choosing a
+   *  model that exposes reasoning efforts chains into an effort picker, then
+   *  applies the selection via sessions.selectModel. */
+  async openModelPicker(): Promise<void> {
+    const attachment = this.state.attachment
+    if (this.closed || this.state.connection !== 'connected' || attachment.phase !== 'attached') return
+    const sessionId = attachment.sessionId
+    const generation = attachment.generation
+    const result = await this.port.listModels(sessionId, this.signal)
+    const current = this.state.attachment
+    if (this.closed
+      || this.state.connection !== 'connected'
+      || current.phase !== 'attached'
+      || current.sessionId !== sessionId
+      || current.generation !== generation) {
+      return
+    }
+    if (!result.ok) {
+      this.setState({ notice: result.error.message })
+      return
+    }
+    const models = result.value
+    const currentKey = `${models.current.provider}/${models.current.model}`
+    const choices: ModelChoice[] = []
+    for (const group of models.groups) {
+      for (const model of group.models) {
+        choices.push({
+          provider: group.id,
+          model: model.id,
+          name: `${group.name} · ${model.name}${`${group.id}/${model.id}` === currentKey ? ' (current)' : ''}`,
+          ...(model.description === undefined ? {} : { description: model.description }),
+          ...(model.reasoning === undefined ? {} : { reasoning: model.reasoning }),
+        })
+      }
+    }
+    if (choices.length === 0) {
+      this.setState({ notice: 'No models available' })
+      return
+    }
+    this.view.openModelPicker(choices, (choice) => {
+      const efforts = choice.reasoning?.efforts ?? []
+      if (efforts.length === 0) {
+        void this.selectModel(sessionId, { provider: choice.provider, model: choice.model })
+        return
+      }
+      // A model with efforts chains into an effort picker; the Default row
+      // omits reasoningEffort so the adapter/provider default applies.
+      const effortChoices: ModelChoice[] = [
+        { provider: choice.provider, model: choice.model, name: 'Default' },
+        ...efforts.map((effort) => ({
+          provider: choice.provider,
+          model: choice.model,
+          name: effort.name,
+          ...(effort.description === undefined ? {} : { description: effort.description }),
+          effortId: effort.id,
+        })),
+      ]
+      this.view.openModelPicker(effortChoices, (effortChoice) => {
+        void this.selectModel(sessionId, {
+          provider: effortChoice.provider,
+          model: effortChoice.model,
+          ...(effortChoice.effortId === undefined ? {} : { reasoningEffort: effortChoice.effortId }),
+        })
+      }, () => this.view.closePicker())
+    }, () => this.view.closePicker())
+  }
+
+  /** Apply the chosen model (and optional effort); the notice echoes the
+   *  selection. */
+  private async selectModel(sessionId: SessionId, selection: {
+    provider: string
+    model: string
+    reasoningEffort?: string
+  }): Promise<void> {
+    const attachment = this.state.attachment
+    if (this.closed || this.state.connection !== 'connected' || attachment.phase !== 'attached') return
+    const generation = attachment.generation
+    const result = await this.port.selectModel(sessionId, selection, this.signal)
+    const current = this.state.attachment
+    if (this.closed
+      || this.state.connection !== 'connected'
+      || current.phase !== 'attached'
+      || current.sessionId !== sessionId
+      || current.generation !== generation) {
+      return
+    }
+    if (!result.ok) {
+      this.setState({ notice: result.error.message })
+      return
+    }
+    const effort = selection.reasoningEffort === undefined ? '' : ` (${selection.reasoningEffort})`
+    this.setState({ notice: `Model: ${selection.model}${effort}` })
+  }
+
   /** Pop the last queued message back into the composer (Codex's edit-last-
    *  queued): remove it from the host queue and return its raw text, or
    *  undefined when there is nothing queued or the removal is rejected. */
@@ -929,6 +1131,9 @@ const MAX_BUFFERED_EVENTS = 10_000
 /** Upper bound on open question requests held per session (a flood of
  *  question/requested frames must not grow the inbox without limit). */
 const MAX_PENDING_QUESTIONS = 16
+
+/** Upper bound on open approval requests held per session. */
+const MAX_PENDING_APPROVALS = 8
 
 /** Submit outcome: accepted, or a reason (with the safe error when rejected). */
 export type SubmitResult =

@@ -13,7 +13,7 @@ import { test } from 'node:test'
 import type { MuxFrame } from '@deepseek-ai/dsh-host-apiproxy/api'
 import type { SessionEvent } from '@deepseek-ai/dsh-session/types'
 
-import { App, parseQuestionAnswers, type AppState, type AppView } from '../src/app.js'
+import { App, parseQuestionAnswers, type AppState, type AppView, type ModelChoice } from '../src/app.js'
 import type { DshPort } from '../src/dsh.js'
 
 class FakeView implements AppView {
@@ -22,6 +22,11 @@ class FakeView implements AppView {
   openProjectPicker(): void {}
   openSessionPicker(): void {}
   closePicker(): void {}
+  modelPicks: Array<{ choices: readonly ModelChoice[]; onSelect: (choice: ModelChoice) => void; onCancel: () => void }> = []
+  openModelPicker(choices: readonly ModelChoice[], onSelect: (choice: ModelChoice) => void, onCancel: () => void): void {
+    this.modelPicks.push({ choices, onSelect, onCancel })
+  }
+
   stop(): void {}
 }
 
@@ -33,6 +38,28 @@ class FakePort implements DshPort {
   promptResult: Awaited<ReturnType<DshPort['prompt']>> = { ok: true, value: { accepted: true } }
 
   respondCalls: Array<{ rpcId: string; value: unknown }> = []
+
+  listModelsCalls: Array<string> = []
+  listModelsResult: Awaited<ReturnType<DshPort['listModels']>> = {
+    ok: true,
+    value: { current: { provider: 'p', model: 'm' }, routable: true, groups: [], failures: [] },
+  }
+
+  selectModelCalls: Array<{ sessionId: string; selection: unknown }> = []
+  selectModelResult: Awaited<ReturnType<DshPort['selectModel']>> = {
+    ok: true,
+    value: { selected: { provider: 'p', model: 'm' } },
+  }
+
+  async listModels(sessionId: string): Promise<Awaited<ReturnType<DshPort['listModels']>>> {
+    this.listModelsCalls.push(String(sessionId))
+    return this.listModelsResult
+  }
+
+  async selectModel(sessionId: string, selection: unknown): Promise<Awaited<ReturnType<DshPort['selectModel']>>> {
+    this.selectModelCalls.push({ sessionId: String(sessionId), selection })
+    return this.selectModelResult
+  }
 
   updateQueueCalls: Array<{ sessionId: string; itemId: string; action: unknown }> = []
   updateQueueResult: Awaited<ReturnType<DshPort['updateQueue']>> = { ok: true, value: { accepted: true } }
@@ -473,4 +500,120 @@ test('a late echo cannot wipe the slash-command instruction', async () => {
   port.push({ type: 'session/event', sessionId: 's1', event: userText(2, 'hello') } as never)
   await new Promise((resolve) => setTimeout(resolve, 20))
   assert.equal(view.renders.at(-1)?.notice, 'Slash commands require the Web UI')
+})
+
+test('approval requests render, answer by echoing the rpcId, and settle', async () => {
+  const port = new FakePort()
+  const { app, view } = await booted(port)
+  await attach(app, port)
+  // The host asks for an approval with a stable rpcId.
+  port.push({ type: 'approval/requested', sessionId: 's1', approvalId: 'appr-1', toolName: 'bash', reason: 'run rm -rf', rpcId: 'rpc-appr-1' } as never)
+  await flush()
+  const pending = view.renders.at(-1)?.attachment
+  assert.equal(pending?.phase === 'attached' ? pending.pendingApprovals.length : -1, 1)
+  // Rejecting echoes the request's rpcId with the approval payload.
+  await app.answerApproval('appr-1', 'rejected')
+  assert.equal(port.respondCalls.length, 1)
+  const call = port.respondCalls[0]
+  assert.equal(call?.rpcId, 'rpc-appr-1')
+  assert.deepEqual(call?.value, {
+    ok: true,
+    value: { sessionId: 's1', approvalId: 'appr-1', outcome: 'rejected' },
+  })
+  const settled = view.renders.at(-1)?.attachment
+  assert.equal(settled?.phase === 'attached' ? settled.pendingApprovals.length : -1, 0)
+  // Allowing the next approval sends 'allowed-once'.
+  port.push({ type: 'approval/requested', sessionId: 's1', approvalId: 'appr-2', toolName: 'bash', rpcId: 'rpc-appr-2' } as never)
+  await flush()
+  await app.answerApproval('appr-2', 'allowed-once')
+  assert.equal(port.respondCalls[1]?.rpcId, 'rpc-appr-2')
+  assert.deepEqual(port.respondCalls[1]?.value, {
+    ok: true,
+    value: { sessionId: 's1', approvalId: 'appr-2', outcome: 'allowed-once' },
+  })
+  // The host's approval/resolved settle clears a late/unknown entry too.
+  port.push({ type: 'approval/requested', sessionId: 's1', approvalId: 'appr-3', toolName: 'bash', rpcId: 'rpc-appr-3' } as never)
+  await flush()
+  port.push({ type: 'approval/resolved', sessionId: 's1', approvalId: 'appr-3', outcome: 'rejected' } as never)
+  await flush()
+  const settled2 = view.renders.at(-1)?.attachment
+  assert.equal(settled2?.phase === 'attached' ? settled2.pendingApprovals.length : -1, 0)
+  // Unknown approval ids are no-ops; a rejected response shows a notice.
+  port.push({ type: 'approval/requested', sessionId: 's1', approvalId: 'appr-4', toolName: 'bash', rpcId: 'rpc-appr-4' } as never)
+  await flush()
+  port.respondResult = { accepted: false, reason: 'not-pending' }
+  await app.answerApproval('appr-4', 'allowed-once')
+  assert.equal(view.renders.at(-1)?.notice, 'Approval already decided')
+  // An unknown approval id is a silent no-op: no respond is issued.
+  const callsBefore = port.respondCalls.length
+  await app.answerApproval('nope', 'allowed-once')
+  assert.equal(port.respondCalls.length, callsBefore)
+})
+
+test('pending approvals are deduped and capped at the oldest entries', async () => {
+  const port = new FakePort()
+  const { app, view } = await booted(port)
+  await attach(app, port)
+  for (let index = 0; index < 12; index += 1) {
+    port.push({ type: 'approval/requested', sessionId: 's1', approvalId: `appr-${index}`, toolName: 'bash', rpcId: `rpc-${index}` } as never)
+  }
+  await flush()
+  const pending = view.renders.at(-1)?.attachment
+  assert.equal(pending?.phase === 'attached' ? pending.pendingApprovals.length : -1, 8)
+  assert.equal(pending?.phase === 'attached' ? pending.pendingApprovals[0]?.approvalId : '', 'appr-0')
+  // A duplicate id does not double the entry.
+  port.push({ type: 'approval/requested', sessionId: 's1', approvalId: 'appr-3', toolName: 'bash', rpcId: 'rpc-3' } as never)
+  await flush()
+  const after = view.renders.at(-1)?.attachment
+  assert.equal(after?.phase === 'attached' ? after.pendingApprovals.length : -1, 8)
+})
+
+test('openModelPicker lists choices and applies the selection with effort', async () => {
+  const port = new FakePort()
+  port.listModelsResult = {
+    ok: true,
+    value: {
+      current: { provider: 'p1', model: 'm1' },
+      routable: true,
+      groups: [
+        {
+          id: 'p1',
+          name: 'Provider One',
+          models: [
+            { id: 'm1', name: 'Model One', reasoning: { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }], defaultEffort: 'low' } },
+            { id: 'm2', name: 'Model Two' },
+          ],
+        },
+      ],
+      failures: [],
+    },
+  }
+  const { app, view } = await booted(port)
+  await attach(app, port)
+  await app.openModelPicker()
+  const pick = view.modelPicks.at(-1)
+  assert.equal(pick?.choices.length, 2)
+  assert.ok(pick?.choices[0]?.name.includes('(current)'), pick?.choices[0]?.name)
+  // Choosing the effort-less model applies immediately without an effort.
+  pick?.onSelect(pick.choices[1] as never)
+  await flush()
+  assert.deepEqual(port.selectModelCalls, [{ sessionId: 's1', selection: { provider: 'p1', model: 'm2' } }])
+  // Choosing the effort model chains into an effort picker; picking High
+  // sends the reasoning effort.
+  port.selectModelCalls.length = 0
+  await app.openModelPicker()
+  const pick2 = view.modelPicks.at(-1)
+  pick2?.onSelect(pick2.choices[0] as never)
+  await flush()
+  const effortPick = view.modelPicks.at(-1)
+  assert.equal(effortPick?.choices.length, 3)
+  assert.equal(effortPick?.choices[0]?.name, 'Default')
+  effortPick?.onSelect(effortPick.choices[2] as never)
+  await flush()
+  assert.deepEqual(port.selectModelCalls, [{ sessionId: 's1', selection: { provider: 'p1', model: 'm1', reasoningEffort: 'high' } }])
+  assert.ok(view.renders.at(-1)?.notice?.includes('Model: m1 (high)'), view.renders.at(-1)?.notice)
+  // A list failure surfaces a notice.
+  port.listModelsResult = { ok: false, error: { code: 'internal', message: 'boom', details: {} } }
+  await app.openModelPicker()
+  assert.equal(view.renders.at(-1)?.notice, 'boom')
 })

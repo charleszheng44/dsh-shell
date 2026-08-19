@@ -11,7 +11,7 @@ import { test } from 'node:test'
 import type { MuxFrame, SessionSummary } from '@deepseek-ai/dsh-host-apiproxy/api'
 import type { SessionEvent } from '@deepseek-ai/dsh-session/types'
 
-import { App, type AppView, type AppState } from '../src/app.js'
+import { App, type AppView, type AppState, type ModelChoice } from '../src/app.js'
 import type { DshPort } from '../src/dsh.js'
 
 class FakeView implements AppView {
@@ -35,6 +35,11 @@ class FakeView implements AppView {
   closePicker(): void {
     this.projectPickerRows = undefined
     this.sessionPickerRows = undefined
+  }
+
+  modelPicks: Array<{ choices: readonly ModelChoice[]; onSelect: (choice: ModelChoice) => void; onCancel: () => void }> = []
+  openModelPicker(choices: readonly ModelChoice[], onSelect: (choice: ModelChoice) => void, onCancel: () => void): void {
+    this.modelPicks.push({ choices, onSelect, onCancel })
   }
 
   stop(): void {
@@ -92,6 +97,28 @@ class FakePort implements DshPort {
   promptResult: Awaited<ReturnType<DshPort['prompt']>> = { ok: true, value: { accepted: true } }
 
   respondCalls: Array<{ rpcId: string; value: unknown }> = []
+
+  listModelsCalls: Array<string> = []
+  listModelsResult: Awaited<ReturnType<DshPort['listModels']>> = {
+    ok: true,
+    value: { current: { provider: 'p', model: 'm' }, routable: true, groups: [], failures: [] },
+  }
+
+  selectModelCalls: Array<{ sessionId: string; selection: unknown }> = []
+  selectModelResult: Awaited<ReturnType<DshPort['selectModel']>> = {
+    ok: true,
+    value: { selected: { provider: 'p', model: 'm' } },
+  }
+
+  async listModels(sessionId: string): Promise<Awaited<ReturnType<DshPort['listModels']>>> {
+    this.listModelsCalls.push(String(sessionId))
+    return this.listModelsResult
+  }
+
+  async selectModel(sessionId: string, selection: unknown): Promise<Awaited<ReturnType<DshPort['selectModel']>>> {
+    this.selectModelCalls.push({ sessionId: String(sessionId), selection })
+    return this.selectModelResult
+  }
 
   updateQueueCalls: Array<{ sessionId: string; itemId: string; action: unknown }> = []
   updateQueueResult: Awaited<ReturnType<DshPort['updateQueue']>> = { ok: true, value: { accepted: true } }

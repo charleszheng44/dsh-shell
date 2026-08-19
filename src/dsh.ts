@@ -30,8 +30,10 @@ import {
 import { muxFrameSchema } from '@deepseek-ai/dsh-host-apiproxy/api/events.schema'
 import type {
   HistoryEntry,
+  ModelSelection,
   MuxFrame,
   QueueAction,
+  SessionModels,
   SessionSummary,
   WorkspaceView,
 } from '@deepseek-ai/dsh-host-apiproxy/api'
@@ -71,6 +73,17 @@ export interface DshPort {
    *  retried, so a duplicate cannot apply twice. */
   updateQueue(sessionId: SessionId, itemId: MessageId, action: QueueAction, signal?: AbortSignal): Promise<RpcResult<{
     accepted: true
+  }>>
+  /** The session's selectable models and current selection. */
+  listModels(sessionId: SessionId, signal?: AbortSignal): Promise<RpcResult<SessionModels>>
+  /** Switch the session's model (and optionally reasoning effort). A write:
+   *  never retried. */
+  selectModel(sessionId: SessionId, selection: {
+    provider: string
+    model: string
+    reasoningEffort?: string
+  }, signal?: AbortSignal): Promise<RpcResult<{
+    selected: ModelSelection
   }>>
 }
 
@@ -143,6 +156,17 @@ export interface PortClient {
     }, signal?: AbortSignal): Promise<RpcResponse<{
       accepted: true
     }>>
+    models(payload: {
+      sessionId: SessionId
+    }, signal?: AbortSignal): Promise<RpcResponse<SessionModels>>
+    selectModel(payload: {
+      sessionId: SessionId
+      provider: string
+      model: string
+      reasoningEffort?: string
+    }, signal?: AbortSignal): Promise<RpcResponse<{
+      selected: ModelSelection
+    }>>
   }
   /** Answer a host question by echoing its server-request rpcId. */
   respond(message: ClientResponse, signal?: AbortSignal): Promise<RpcReceipt>
@@ -172,6 +196,13 @@ export function createDshPort(client: PortClient): DshPort {
       sessionId,
       itemId,
       action,
+    }, signal), false),
+    listModels: (sessionId, signal) => unary(() => client.sessions.models({ sessionId }, signal), true),
+    selectModel: (sessionId, selection, signal) => unary(() => client.sessions.selectModel({
+      sessionId,
+      provider: selection.provider,
+      model: selection.model,
+      ...(selection.reasoningEffort === undefined ? {} : { reasoningEffort: selection.reasoningEffort }),
     }, signal), false),
     async *stream(signal, onOpen) {
       // Strip the RPC envelope from every mux frame but keep its rpcId (the

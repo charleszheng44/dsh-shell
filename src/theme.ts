@@ -276,13 +276,11 @@ export const markdownTheme: MarkdownTheme = {
   underline,
 }
 
-/** Editor (no visible box — the composer draws full-width border rules
- *  around it, so its own border rows are blanked; the editor's ↑/↓
- *  scroll cues also flow through borderColor and are dropped with them,
- *  an accepted tradeoff) and the picker SelectList (mist selection, dim
- *  descriptions and scroll info). */
+/** Editor (mist accent border — the composer's prompt column supplies the
+ *  border corners so the box's top and bottom lines span the terminal) and
+ *  the picker SelectList (mist selection, dim descriptions and scroll info). */
 export const editorTheme: EditorTheme = {
-  borderColor: () => '',
+  borderColor: mistAccentBlue,
   selectList: {
     // pi 0.84.2 declares selectedPrefix but renders a hardcoded "→ " prefix;
     // the key is required by the theme type, so provide the styled form for

@@ -26,8 +26,9 @@ import {
   type OverlayHandle,
   type SelectItem,
 } from '@earendil-works/pi-tui'
+import { wordWrapLine } from '@earendil-works/pi-tui/dist/components/editor.js'
 
-import { queuedItemText, type AppState, type AppView, type ProjectRow, type QuestionItem, type SessionRow, type SubmitResult } from './app.js'
+import { queuedItemText, type AppState, type AppView, type ModelChoice, type PendingApproval, type ProjectRow, type QuestionItem, type SessionRow, type SubmitResult } from './app.js'
 import { partialSegments, type AssistantSegment, type TranscriptRow } from './transcript.js'
 import {
   assistantMarker,
@@ -443,21 +444,6 @@ export function toolPreviewText(output: string, truncated: boolean): string {
     : `${preview.join('\n')}\n… +${remaining} more lines`
 }
 
-/** Full-width horizontal rule for the composer box: pi's Text wraps long
- *  content, so a custom component repeats the border glyph to the allocated
- *  width. */
-class Rule implements Component {
-  constructor(private readonly style: (text: string) => string) {}
-
-  invalidate(): void {
-    // Static glyph: nothing to invalidate.
-  }
-
-  render(width: number): string[] {
-    return [this.style('─'.repeat(Math.max(1, Math.floor(width))))]
-  }
-}
-
 /** Terminal view: owns the Pi TUI, renders AppState, and shows pickers. */
 export class TerminalView implements AppView {
   private readonly terminal = new ProcessTerminal()
@@ -482,6 +468,10 @@ export class TerminalView implements AppView {
    *  question is open; the composer answers it. */
   private readonly questionBox = new Box(1, 1, questionBoxBg)
   private readonly questionText = new Text('', 1, 0)
+  /** Host approval requests render as a boxed card at the transcript tail,
+   *  answered with Ctrl+A (allow once) / Ctrl+R (reject). */
+  private readonly approvalBox = new Box(1, 1, questionBoxBg)
+  private readonly approvalText = new Text('', 1, 0)
   private readonly header = new Text('', 1, 0)
   /** pi-style usage/context line above the footer hints. */
   private readonly stats = new Text('', 1, 0)
@@ -489,6 +479,43 @@ export class TerminalView implements AppView {
   private readonly queue = new Text('', 1, 0)
   private readonly hints = new Text('', 1, 0)
   private readonly editor = new Editor(this.tui, editorTheme, { paddingX: 1 })
+  /** Composer prompt column: border corners on the first/last rows, the ❯
+   *  marker on the first buffer row, blanks between — rebuilt to match the
+   *  editor's wrapped height so the box has no blank margin rows. */
+  private readonly prompt = new Text('', 0, 0)
+
+  /** Rebuild the prompt column to mirror the editor's wrapped height: pi's
+   *  Editor always renders a top border row, the visible buffer lines, and
+   *  a bottom border row, so the column renders border corners (──) on its
+   *  first and last rows and the ❯ marker on the first buffer row. The
+   *  wrap math mirrors the editor's own layoutText (wordWrapLine at the
+   *  content width) and its visible-line clamp, so the heights always
+   *  match and the box carries no blank margin rows. */
+  private lastPrompt = ''
+  private updatePrompt(): void {
+    const width = Math.max(1, this.terminal.columns - 2 - 2 * this.editor.getPaddingX())
+    let wrapped = 0
+    for (const line of this.editor.getLines()) {
+      wrapped += line === '' || visibleWidth(line) <= width ? 1 : wordWrapLine(line, width).length
+    }
+    const maxVisible = Math.max(5, Math.floor(this.terminal.rows * 0.3))
+    const count = Math.min(Math.max(1, wrapped), maxVisible)
+    const rows = [composerBorderStyle('──')]
+    rows.push(userMarker())
+    for (let index = 1; index < count; index += 1) rows.push('  ')
+    rows.push(composerBorderStyle('──'))
+    const text = rows.join('\n')
+    if (text === this.lastPrompt) return
+    this.lastPrompt = text
+    this.prompt.setText(text)
+  }
+
+  /** Rebuild the prompt column after a terminal resize (the editor re-wraps
+   *  at the new width, so the column must re-mirror its height). */
+  private readonly onTerminalResize = (): void => {
+    this.updatePrompt()
+    this.tui.requestRender()
+  }
   private overlay: OverlayHandle | undefined
   /** The last rendered state: the Ctrl+U gate decides against what the user
    *  currently sees, not against frames that arrived since. */
@@ -503,9 +530,13 @@ export class TerminalView implements AppView {
     private readonly onQuit: () => void,
     private readonly onSubmit: (text: string) => Promise<SubmitResult>,
     private readonly onEditQueued: () => Promise<string | undefined>,
+    private readonly onModel: () => void,
+    private readonly onApprove: (approvalId: string) => void,
+    private readonly onReject: (approvalId: string) => void,
   ) {
     this.editor.disableSubmit = true
     this.questionBox.addChild(this.questionText)
+    this.approvalBox.addChild(this.approvalText)
     const footer = new VStack([
       // pi-style usage/context line; empty (zero rows) when unattached.
       { component: this.stats, basis: 'auto', grow: 0 },
@@ -516,22 +547,20 @@ export class TerminalView implements AppView {
       primary: true,
       overscroll: 'chain',
     })
-    // Codex-style composer: a "> " prompt prefix leads the input line; the
+    // Codex-style composer: a ❯ prompt column leads the input line; the
     // editor takes the remaining width (pi computes the hardware cursor
-    // column from the marker's position in the composed row, so the prefix
-    // shifts it correctly). The editor's own border rows are blanked
-    // (editorTheme), and full-width rules above and below draw the box, so
-    // the top and bottom lines reach the left border instead of being
-    // opened by the prefix's blank rows. The prefix leads with a blank line
-    // and top-aligns: '> ' always sits on the first buffer line, whatever
-    // the buffer height.
+    // column from the marker's position in the composed row, so the prompt
+    // shifts it correctly). The prompt column mirrors the editor's height —
+    // its first and last rows draw the border corners (─ in the accent
+    // color) and the ❯ sits on the first buffer line — so the box's top and
+    // bottom lines span the terminal with no blank margin rows inside.
+    this.editor.onChange = () => this.updatePrompt()
+    this.updatePrompt()
     const editorRow = new VStack([
-      new Rule(composerBorderStyle),
       new HStack([
-        { component: new Text(`\n${userMarker()}`, 0, 0), basis: 2, grow: 0 },
+        { component: this.prompt, basis: 2, grow: 0 },
         { component: this.editor, basis: 0, grow: 1 },
       ], { align: 'start' }),
-      new Rule(composerBorderStyle),
       footer,
     ])
     this.tui.setLayoutRoot(
@@ -575,6 +604,39 @@ export class TerminalView implements AppView {
       if (matchesKey(data, 'ctrl+s')) {
         this.onSession()
         return { consume: true }
+      }
+      if (matchesKey(data, 'ctrl+m') && data !== '\r') {
+        // Model/effort picker: only meaningful while attached on a live
+        // stream with no overlay open; otherwise the key falls through.
+        // In legacy terminals Ctrl+M is the SAME byte as Enter (CR 0x0D),
+        // so plain Enter must never open the picker — only the
+        // disambiguated kitty CSI-u form (\x1b[109;5u) can mean Ctrl+M.
+        const state = this.latestState
+        if (state !== undefined
+          && state.connection === 'connected'
+          && state.attachment.phase === 'attached'
+          && this.overlay === undefined) {
+          this.onModel()
+          return { consume: true }
+        }
+        return undefined
+      }
+      if (matchesKey(data, 'ctrl+a') || matchesKey(data, 'ctrl+r')) {
+        // Answer a pending approval: Ctrl+A allows once, Ctrl+R rejects.
+        // With no approval pending the key falls through to the editor's
+        // native bindings.
+        const state = this.latestState
+        const first = state !== undefined
+          && state.connection === 'connected'
+          && state.attachment.phase === 'attached'
+          ? state.attachment.pendingApprovals[0]
+          : undefined
+        if (first !== undefined && this.overlay === undefined) {
+          if (matchesKey(data, 'ctrl+a')) this.onApprove(String(first.approvalId))
+          else this.onReject(String(first.approvalId))
+          return { consume: true }
+        }
+        return undefined
       }
       if (matchesKey(data, 'ctrl+u')) {
         // Codex's edit-last-queued: pop the last queued message back into the
@@ -642,6 +704,7 @@ export class TerminalView implements AppView {
     // and pi's hollow reverse-video cell. DECSCUSR 2 (steady block) keeps
     // terminals that DO honor the sequence from double-blinking.
     this.terminal.write('\x1b[2 q')
+    process.stdout.on('resize', this.onTerminalResize)
     this.cursorBlinkTimer = setInterval(() => {
       this.cursorVisible = !this.cursorVisible
       this.tui.setShowHardwareCursor(this.cursorVisible)
@@ -666,6 +729,7 @@ export class TerminalView implements AppView {
 
   render(state: AppState): void {
     this.latestState = state
+    this.updatePrompt()
     this.header.setText(headerStyle(headerText(state)))
     this.workingActive = isWorking(state)
     if (this.workingActive && this.workingTimer === undefined) {
@@ -726,6 +790,16 @@ export class TerminalView implements AppView {
     } else {
       this.partial.setText('')
     }
+    // An open host approval renders as a boxed card at the transcript tail,
+    // answered with Ctrl+A / Ctrl+R until approval/resolved settles it.
+    // Only the first pending approval is shown at a time.
+    if (connected && attachment.phase === 'attached' && attachment.pendingApprovals.length > 0) {
+      const pending = attachment.pendingApprovals[0]
+      if (pending !== undefined) {
+        this.approvalText.setText(approvalCardText(pending))
+        transients.push(this.approvalBox)
+      }
+    }
     // An open host question renders as a boxed card above the status line;
     // the composer answers it until question/resolved settles it. Only the
     // first pending question is shown and answerable at a time; the host
@@ -757,6 +831,21 @@ export class TerminalView implements AppView {
     })
     this.showPicker(items, pickerTitleStyle('Select project'), (item) => {
       const row = rows.find((candidate) => String(candidate.key) === item.value)
+      if (row !== undefined) onSelect(row)
+    }, onCancel)
+  }
+
+  openModelPicker(choices: readonly ModelChoice[], onSelect: (choice: ModelChoice) => void, onCancel: () => void): void {
+    const items: SelectItem[] = choices.map((choice) => ({
+      value: `${choice.provider}\u0000${choice.model}\u0000${choice.effortId ?? ''}`,
+      label: pickerLabel(choice.name, 'Model'),
+      ...(choice.description === undefined ? {} : { description: pickerLabel(choice.description, '') }),
+    }))
+    this.showPicker(items, pickerTitleStyle('Select model'), (item) => {
+      const [provider, model, effortId] = item.value.split('\u0000')
+      const row = choices.find((candidate) => candidate.provider === provider
+        && candidate.model === model
+        && (candidate.effortId ?? '') === (effortId ?? ''))
       if (row !== undefined) onSelect(row)
     }, onCancel)
   }
@@ -802,6 +891,7 @@ export class TerminalView implements AppView {
   }
 
   stop(): void {
+    process.stdout.removeListener('resize', this.onTerminalResize)
     if (this.cursorBlinkTimer !== undefined) {
       clearInterval(this.cursorBlinkTimer)
       this.cursorBlinkTimer = undefined
@@ -991,12 +1081,28 @@ export function canEditQueued(state: AppState, overlayOpen: boolean, busy: boole
   return state.attachment.queue.some((item) => item.placement === 'queued')
 }
 
-/** Footer hints: while a question is open the composer answers it. */
+/** Footer hints: while a question is open the composer answers it, and
+ *  while an approval is pending Ctrl+A/Ctrl+R decide it. */
 export function footerHints(attachment: AppState['attachment']): string {
   const question = attachment.phase === 'attached' && attachment.pendingQuestions.length > 0
-  return footerStyle(question
-    ? 'Ctrl+P project  Ctrl+S session  Ctrl+C quit\nAnswer: a number picks an option, commas pick several, any text answers'
-    : 'Ctrl+P project  Ctrl+S session  Ctrl+C quit\nEnter send · ↑ history · Approvals and questions: use Web UI')
+  const approval = attachment.phase === 'attached' && attachment.pendingApprovals.length > 0
+  const keys = 'Ctrl+P project  Ctrl+S session  Ctrl+M model  Ctrl+C quit'
+  const mode = approval
+    ? 'Ctrl+A allow once · Ctrl+R reject · Enter send · ↑ history'
+    : question
+      ? 'Answer: a number picks an option, commas pick several, any text answers'
+      : 'Enter send · ↑ history · Approvals and questions: use Web UI'
+  return footerStyle(`${keys}\n${mode}`)
+}
+
+/** The approval card's content: the tool being approved (with the host's
+ *  reason, flattened) and the answer keys. */
+export function approvalCardText(approval: PendingApproval): string {
+  const name = toolDisplayName(terminalSafeText(approval.toolName))
+  const reason = approval.reason === undefined
+    ? ''
+    : ` — ${terminalSafeText(approval.reason).replace(/\s+/g, ' ').trim()}`
+  return `Approval: ${name}${reason}\n  Ctrl+A allow once · Ctrl+R reject`
 }
 
 /** The question card's content: the question text (with the supporting

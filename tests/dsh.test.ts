@@ -31,6 +31,8 @@ function stubClient(overrides: {
       history: async () => ok({ events: [], hasMore: false }),
       prompt: async () => ok({ accepted: true }),
       updateQueue: async () => ok({ accepted: true }),
+      models: async () => ok({ current: { provider: 'p', model: 'm' }, routable: true, groups: [], failures: [] }),
+      selectModel: async () => ok({ selected: { provider: 'p', model: 'm' } }),
     },
     respond: async () => ({ accepted: true }),
     events: {
@@ -348,4 +350,55 @@ test('createDshPort.updateQueue sends the item id and action, never retried', as
   const folded = await createDshPort(failing).updateQueue('s1' as never, 'item-1' as never, { kind: 'remove' })
   assert.equal(folded.ok, false)
   assert.equal(failingCalls, 1)
+})
+
+test('createDshPort.listModels and selectModel send the session and fold errors', async () => {
+  let seenModels: unknown
+  let seenSelect: unknown
+  let selectCalls = 0
+  const client = stubClient({
+    sessions: {
+      models: async (payload) => {
+        seenModels = payload
+        return ok({ current: { provider: 'p', model: 'm' }, routable: true, groups: [], failures: [] })
+      },
+      selectModel: async (payload) => {
+        selectCalls += 1
+        seenSelect = payload
+        return ok({ selected: { provider: 'p', model: 'm2' } })
+      },
+    },
+  })
+  const port: DshPort = createDshPort(client)
+  const listed = await port.listModels('session-abc' as never)
+  assert.equal(listed.ok, true)
+  assert.deepEqual(seenModels, { sessionId: 'session-abc' })
+  const selected = await port.selectModel('session-abc' as never, { provider: 'p', model: 'm2', reasoningEffort: 'high' })
+  assert.equal(selected.ok, true)
+  assert.deepEqual(seenSelect, { sessionId: 'session-abc', provider: 'p', model: 'm2', reasoningEffort: 'high' })
+  // selectModel is a write: never retried on a connection error.
+  let failingCalls = 0
+  const failing = stubClient({
+    sessions: {
+      selectModel: async () => {
+        failingCalls += 1
+        throw new Error('fetch failed')
+      },
+    },
+  })
+  const folded = await createDshPort(failing).selectModel('s1' as never, { provider: 'p', model: 'm2' })
+  assert.equal(folded.ok, false)
+  assert.equal(failingCalls, 1)
+  // A selection without an effort omits the key (exactOptionalPropertyTypes).
+  let seenNoEffort: unknown
+  const noEffort = stubClient({
+    sessions: {
+      selectModel: async (payload) => {
+        seenNoEffort = payload
+        return ok({ selected: { provider: 'p', model: 'm2' } })
+      },
+    },
+  })
+  await createDshPort(noEffort).selectModel('s1' as never, { provider: 'p', model: 'm2' })
+  assert.deepEqual(seenNoEffort, { sessionId: 's1', provider: 'p', model: 'm2' })
 })
