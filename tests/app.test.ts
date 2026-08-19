@@ -157,6 +157,14 @@ class FakePort implements DshPort {
     return { ok: true, value: { sessionId: 's-new' as never } }
   }
 
+  cancelTurnCalls: Array<string> = []
+  cancelTurnResult: Awaited<ReturnType<DshPort['cancelTurn']>> = { ok: true, value: { accepted: true } }
+
+  async cancelTurn(sessionId: string): Promise<Awaited<ReturnType<DshPort['cancelTurn']>>> {
+    this.cancelTurnCalls.push(String(sessionId))
+    return this.cancelTurnResult
+  }
+
   updateQueueCalls: Array<{ sessionId: string; itemId: string; action: unknown }> = []
   updateQueueResult: Awaited<ReturnType<DshPort['updateQueue']>> = { ok: true, value: { accepted: true } }
 

@@ -629,6 +629,13 @@ test('footerHints switches to answering mode while a question is open', () => {
   // While an approval is pending the Ctrl+A/Ctrl+R keys are advertised.
   const approving = footerHints({ phase: 'attached', pendingQuestions: [], pendingApprovals: [{ rpcId: 'r', approvalId: 'a1', toolName: 'bash' }] } as never)
   assert.ok(approving.includes('Ctrl+A allow once'), approving)
+  // While a turn is in flight the mode line advertises the ESC stop.
+  const working = footerHints({ phase: 'attached', sending: true, pendingQuestions: [], pendingApprovals: [] } as never)
+  assert.ok(working.includes('ESC stop turn'), working)
+  const workingTurn = footerHints({ phase: 'attached', turnActive: 0, pendingQuestions: [], pendingApprovals: [] } as never)
+  assert.ok(workingTurn.includes('ESC stop turn'), workingTurn)
+  const idle = footerHints({ phase: 'attached', pendingQuestions: [], pendingApprovals: [] } as never)
+  assert.ok(!idle.includes('ESC stop'), idle)
   assert.ok(approving.includes('Ctrl+O model'), approving)
   assert.ok(!approving.includes('Answer:'), approving)
 })

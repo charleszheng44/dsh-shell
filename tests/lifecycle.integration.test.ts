@@ -277,6 +277,7 @@ function startQueueHost(): Promise<{
   promptCalls: unknown[]
   createWorkspaceCalls: Array<{ path: string }>
   createSessionCalls: Array<{ workspaceId?: string }>
+  cancelCalls: Array<string>
   muxSend: (payload: unknown, rpcId?: string) => void
 }> {
   const updateQueueCalls: Array<{ sessionId: string; itemId: string; action: unknown }> = []
@@ -285,6 +286,7 @@ function startQueueHost(): Promise<{
   const promptCalls: unknown[] = []
   const createWorkspaceCalls: Array<{ path: string }> = []
   const createSessionCalls: Array<{ workspaceId?: string }> = []
+  const cancelCalls: Array<string> = []
   const SID = 's1'
   const workspaces = [
     { workspaceId: 'w1', path: '/tmp', title: 'stub', sessionIds: [SID], createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' },
@@ -344,6 +346,14 @@ function startQueueHost(): Promise<{
           const workspaceId = (parsed.payload as { workspaceId?: string }).workspaceId
           createSessionCalls.push({ ...(workspaceId === undefined ? {} : { workspaceId }) })
           value = { sessionId: 's2', agentPreset: undefined }
+          break
+        }
+        case 'session.cancel': {
+          cancelCalls.push((parsed.payload as { sessionId?: string }).sessionId ?? '')
+          // Settle the stop immediately: the turn/end clears the working
+          // line (and retires the 'Turn cancelled' notice).
+          muxSend({ type: 'session/event', sessionId: SID, event: { type: 'turn/end', seq: 4, time: 0, data: { turn: 0 } } })
+          value = { accepted: true }
           break
         }
         case 'session.list':
@@ -482,7 +492,7 @@ function startQueueHost(): Promise<{
       // Resolve a wrapper, not the value: the upgrade handler assigns the
       // real sender only after the child CLI connects, so a captured value
       // here would be the no-op initializer.
-      resolve({ server, origin: `http://127.0.0.1:${address.port}`, updateQueueCalls, respondBodies, selectModelCalls, promptCalls, createWorkspaceCalls, createSessionCalls, muxSend: (payload, rpcId) => muxSend(payload, rpcId) })
+      resolve({ server, origin: `http://127.0.0.1:${address.port}`, updateQueueCalls, respondBodies, selectModelCalls, promptCalls, createWorkspaceCalls, createSessionCalls, cancelCalls, muxSend: (payload, rpcId) => muxSend(payload, rpcId) })
     })
   })
 }
@@ -787,6 +797,68 @@ test('create a project and a session end to end', async () => {
     // the app never matches.
     await new Promise((resolve) => setTimeout(resolve, 300))
     assert.equal(createWorkspaceCalls.length, 1, 'ESC cancels without a write')
+    child.stdin?.write('\u0003') // Ctrl+C
+    const result = await done
+    assert.equal(result.code, 0)
+    assert.equal(result.restored, true)
+  } finally {
+    child?.kill()
+    server.close()
+  }
+})
+
+test('ESC stops the running turn end to end', async () => {
+  const { server, origin, muxSend, respondBodies, cancelCalls } = await startQueueHost()
+  let child: ChildProcess | undefined
+  try {
+    const spawned = runCli(['--host', origin])
+    child = spawned.child
+    const { done } = spawned
+    const stdoutRef = { value: '' }
+    child.stdout?.on('data', (chunk: Buffer) => { stdoutRef.value += chunk.toString() })
+    await waitForConnected(child, stdoutRef)
+    // Pick the stub workspace, then its session.
+    await waitForStdout(stdoutRef, 'Select project')
+    child.stdin?.write('\u001b[B\r')
+    await waitForStdout(stdoutRef, 'Select session')
+    child.stdin?.write('\r')
+    await waitForStdout(stdoutRef, 'stub / stub session / connected')
+    // The stub replays an approval ask at attach: answer it so the footer
+    // shows the plain hints again (the approval hint would otherwise take
+    // the mode line).
+    await waitForStdout(stdoutRef, 'Approval: Bash')
+    child.stdin?.write('\u0001') // Ctrl+A
+    await waitFor(() => respondBodies.length === 1, 'approval response')
+    // A live turn starts (history ended at seq 2): the Deep diving line
+    // appears, and the footer advertises the stop key.
+    muxSend({ type: 'session/event', sessionId: 's1', event: { type: 'turn/start', seq: 3, time: 0, data: { turn: 0 } } })
+    await waitForStdout(stdoutRef, 'Deep diving')
+    await waitForStdout(stdoutRef, 'ESC stop turn')
+    // ESC stops the turn: the host sees session.cancel for the session.
+    child.stdin?.write('\u001b')
+    await waitFor(() => cancelCalls.length === 1, 'session.cancel call')
+    assert.equal(cancelCalls[0], 's1')
+    // The stub settles with turn/end: the working line clears (judge each
+    // row by its last write — old frames accumulate in the stream).
+    await waitFor(() => {
+      const segments: Array<{ row: number; text: string }> = []
+      let row = 1
+      let last = 0
+      const position = /\x1b\[(\d+);1H/g
+      for (let m = position.exec(stdoutRef.value); m !== null; m = position.exec(stdoutRef.value)) {
+        const text = stdoutRef.value.slice(last, m.index)
+        if (text !== '') segments.push({ row, text })
+        row = Number(m[1])
+        last = m.index + m[0].length
+      }
+      if (last < stdoutRef.value.length) segments.push({ row, text: stdoutRef.value.slice(last) })
+      const byRow = new Map<number, string>()
+      for (const segment of segments) {
+        const parts = segment.text.split('\x1b[2K')
+        byRow.set(segment.row, parts.at(-1) ?? '')
+      }
+      return ![...byRow.values()].some((text) => text.includes('Deep diving'))
+    }, 'the working line clears after the cancel')
     child.stdin?.write('\u0003') // Ctrl+C
     const result = await done
     assert.equal(result.code, 0)

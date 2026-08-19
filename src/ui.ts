@@ -597,6 +597,7 @@ export class TerminalView implements AppView {
     private readonly onSession: () => void,
     private readonly onQuit: () => void,
     private readonly onSubmit: (text: string) => Promise<SubmitResult>,
+    private readonly onCancelTurn: () => void,
     private readonly onEditQueued: () => Promise<string | undefined>,
     private readonly onModel: () => void,
     private readonly onApprove: (approvalId: string) => void,
@@ -769,6 +770,17 @@ export class TerminalView implements AppView {
           this.editor.disableSubmit = !this.editorEnabled
         })
         return { consume: true }
+      }
+      if (matchesKey(data, 'esc')) {
+        // ESC cancels the running turn (Codex-style stop). With no turn in
+        // flight, or with a picker/modal open, the key falls through — the
+        // overlays cancel themselves, and the editor keeps its native ESC.
+        const state = this.latestState
+        if (this.overlay === undefined && state !== undefined && isWorking(state)) {
+          this.onCancelTurn()
+          return { consume: true }
+        }
+        return undefined
       }
       if (matchesKey(data, 'ctrl+c')) {
         this.onQuit()
@@ -1228,11 +1240,15 @@ export function footerHints(attachment: AppState['attachment']): string {
   const question = attachment.phase === 'attached' && attachment.pendingQuestions.length > 0
   const approval = attachment.phase === 'attached' && attachment.pendingApprovals.length > 0
   const keys = 'Ctrl+P project  Ctrl+S session  Ctrl+O model  Ctrl+C quit'
+  const working = attachment.phase === 'attached'
+    && (attachment.sending || attachment.turnActive !== undefined)
   const mode = approval
     ? 'Ctrl+A allow once · Ctrl+R reject · Enter send · ↑ history'
     : question
       ? 'Answer: a number picks an option, commas pick several, any text answers'
-      : 'Enter send · ↑ history'
+      : working
+        ? 'Enter send · ↑ history · ESC stop turn'
+        : 'Enter send · ↑ history'
   return footerStyle(`${keys}\n${mode}`)
 }
 

@@ -114,7 +114,7 @@ The terminal has one transcript, one editor, one footer, and selection overlays:
 +------------------------------------------------------------------+
 ```
 
-`Ctrl+P` opens the project selector. Selecting a project immediately opens its session selector. `Ctrl+S` opens the session selector for the current project. `Ctrl+C` stops networking and the TUI and restores the terminal. The existing Pi `Editor` owns multiline editing and submit key behavior.
+`Ctrl+P` opens the project selector. Selecting a project immediately opens its session selector. `Ctrl+S` opens the session selector for the current project. `ESC` stops the attached session's active turn (`sessions.cancel`); the host preserves the pending inbox work, which resumes in FIFO order after the cancellation settles, and the working line clears when the `turn/end` arrives. `Ctrl+C` stops networking and the TUI and restores the terminal. The existing Pi `Editor` owns multiline editing and submit key behavior.
 
 The project selector contains `All sessions` followed by the Workspaces returned by `workspace.list`. The session selector:
 

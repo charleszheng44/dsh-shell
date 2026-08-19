@@ -142,6 +142,7 @@ export async function main(argv: readonly string[]): Promise<number> {
   }
 
   let submit: (text: string) => Promise<import('./app.js').SubmitResult> = async () => ({ ok: false, reason: 'not-attached' })
+  let cancelTurn: () => void = () => {}
   let editQueued: () => Promise<string | undefined> = async () => undefined
   let model: () => void = () => {}
   let approve: (approvalId: string) => void = () => {}
@@ -152,6 +153,7 @@ export async function main(argv: readonly string[]): Promise<number> {
     () => { void app.openSessionPicker() },
     () => { shutdown(0) },
     (text) => submit(text),
+    () => cancelTurn(),
     () => editQueued(),
     () => model(),
     (approvalId) => approve(approvalId),
@@ -160,6 +162,7 @@ export async function main(argv: readonly string[]): Promise<number> {
   )
   const app = new App(createDshPort(new NodeApiClient(origin)), view, controller.signal)
   submit = (text) => app.submit(text)
+  cancelTurn = () => { void app.cancelTurn() }
   editQueued = () => app.editQueuedItem()
   model = () => { void app.openModelPicker() }
   approve = (approvalId) => { void app.answerApproval(approvalId, 'allowed-once') }

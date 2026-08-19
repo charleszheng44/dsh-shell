@@ -97,6 +97,11 @@ export interface DshPort {
   createSession(workspaceId: WorkspaceId | undefined, signal?: AbortSignal): Promise<RpcResult<{
     sessionId: SessionId
   }>>
+  /** Stop the attached session's active turn; pending inbox work resumes in
+   *  FIFO order after the cancellation settles. A write: never retried. */
+  cancelTurn(sessionId: SessionId, signal?: AbortSignal): Promise<RpcResult<{
+    accepted: true
+  }>>
 }
 
 /** Upper bound on one WebSocket message: a hostile host must not be able to
@@ -192,6 +197,11 @@ export interface PortClient {
       sessionId: SessionId
       agentPreset?: string
     }>>
+    cancel(payload: {
+      sessionId: SessionId
+    }, signal?: AbortSignal): Promise<RpcResponse<{
+      accepted: true
+    }>>
   }
   /** Answer a host question by echoing its server-request rpcId. */
   respond(message: ClientResponse, signal?: AbortSignal): Promise<RpcReceipt>
@@ -234,6 +244,7 @@ export function createDshPort(client: PortClient): DshPort {
       workspaceId === undefined ? {} : { workspaceId },
       signal,
     ), false),
+    cancelTurn: (sessionId, signal) => unary(() => client.sessions.cancel({ sessionId }, signal), false),
     async *stream(signal, onOpen) {
       // Strip the RPC envelope from every mux frame but keep its rpcId (the
       // question/requested answer must echo it); stream errors surface as the

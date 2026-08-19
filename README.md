@@ -61,8 +61,9 @@ pnpm build
 ```
 
 Press `Ctrl+P` for the project selector, `Ctrl+S` for the session selector,
-`Enter` to send the editor's text to the attached session, and `Ctrl+C` to
-leave the application. Both selectors end with a `＋ Create new` action:
+`Enter` to send the editor's text to the attached session, `ESC` to stop the
+running turn (pending follow-ups resume in order), and `Ctrl+C` to leave the
+application. Both selectors end with a `＋ Create new` action:
 a project is created over an existing directory path (typed into the modal
 that follows), and a new session is created in the selected project and
 attached immediately. Submitted text appears in the transcript only after

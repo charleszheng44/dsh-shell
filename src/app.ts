@@ -579,7 +579,11 @@ export class App {
     // A finished turn is a stats boundary: the footer's token and context
     // numbers come from the session-list projection, so re-snapshot them
     // instead of freezing the attach-time values for the whole attachment.
-    if (frame.event.type === 'turn/end') void this.refreshStats()
+    if (frame.event.type === 'turn/end') {
+      // The turn/end is the cancellation's settlement: retire the notice.
+      if (this.state.notice === 'Turn cancelled') this.setState({ notice: undefined })
+      void this.refreshStats()
+    }
   }
 
   /** Apply a queue/question update to the per-session inbox cache, and to
@@ -837,6 +841,28 @@ export class App {
       return
     }
     await this.attach(result.value.sessionId)
+  }
+
+  /** ESC: stop the attached session's active turn. The host preserves the
+   *  pending inbox work (it resumes in FIFO order after the cancellation
+   *  settles); the 'Turn cancelled' notice clears when the turn/end arrives.
+   *  A write: never retried. */
+  async cancelTurn(): Promise<void> {
+    if (this.closed) return
+    const attachment = this.state.attachment
+    if (this.state.connection !== 'connected'
+      || attachment.phase !== 'attached'
+      || attachment.turnActive === undefined) {
+      return
+    }
+    const sessionId = attachment.sessionId
+    const result = await this.port.cancelTurn(sessionId, this.signal)
+    if (this.closed) return
+    if (!result.ok) {
+      this.setState({ notice: `Cancel failed: ${result.error.message}` })
+      return
+    }
+    this.setState({ notice: 'Turn cancelled' })
   }
 
   /** Attach to a session: load one tail history page and project it. */

@@ -97,6 +97,14 @@ class FakePort implements DshPort {
     return this.createSessionResult
   }
 
+  cancelTurnCalls: Array<string> = []
+  cancelTurnResult: Awaited<ReturnType<DshPort['cancelTurn']>> = { ok: true, value: { accepted: true } }
+
+  async cancelTurn(sessionId: string): Promise<Awaited<ReturnType<DshPort['cancelTurn']>>> {
+    this.cancelTurnCalls.push(String(sessionId))
+    return this.cancelTurnResult
+  }
+
   updateQueueCalls: Array<{ sessionId: string; itemId: string; action: unknown }> = []
   updateQueueResult: Awaited<ReturnType<DshPort['updateQueue']>> = { ok: true, value: { accepted: true } }
 
@@ -871,4 +879,46 @@ test('create session succeeds but attach is refused by a mid-flight disconnect',
   assert.equal(port.createSessionCalls.length, 1, 'the write went out')
   assert.equal(view.renders.at(-1)?.attachment.phase, 'none', 'no attach while disconnected')
   assert.equal(view.renders.at(-1)?.notice, 'Disconnected: restart dsh-shell to reconnect')
+})
+
+test('ESC cancel: stops the running turn, notices, and clears on turn/end', async () => {
+  const port = new FakePort()
+  const { app, view } = await booted(port)
+  await attach(app, port)
+  // Start a live turn (history ended at seq 2).
+  port.push({ type: 'session/event', sessionId: 's1', event: { type: 'turn/start', seq: 2, time: 0, data: { turn: 0 } } } as never)
+  await flush()
+  assert.equal(view.renders.at(-1)?.attachment.phase === 'attached' ? (view.renders.at(-1)?.attachment as { turnActive?: number }).turnActive : undefined, 0)
+  await app.cancelTurn()
+  await flush()
+  assert.deepEqual(port.cancelTurnCalls, ['s1'])
+  assert.equal(view.renders.at(-1)?.notice, 'Turn cancelled')
+  // The turn/end settles the cancellation: the notice retires.
+  port.push({ type: 'session/event', sessionId: 's1', event: { type: 'turn/end', seq: 3, time: 0, data: { turn: 0 } } } as never)
+  await flush()
+  assert.equal(view.renders.at(-1)?.notice, undefined)
+  assert.equal(view.renders.at(-1)?.attachment.phase === 'attached' ? (view.renders.at(-1)?.attachment as { turnActive?: number }).turnActive : undefined, undefined)
+})
+
+test('ESC cancel: gated on a live turn, connected stream, and failure notice', async () => {
+  const port = new FakePort()
+  const { app, view } = await booted(port)
+  await attach(app, port)
+  // No turn in flight: nothing is sent.
+  await app.cancelTurn()
+  assert.equal(port.cancelTurnCalls.length, 0)
+  // A rejected cancel surfaces the error while the turn is live.
+  port.push({ type: 'session/event', sessionId: 's1', event: { type: 'turn/start', seq: 2, time: 0, data: { turn: 0 } } } as never)
+  await flush()
+  port.cancelTurnResult = { ok: false, error: { code: 'agent-busy', message: 'busy', details: { reason: 'x' } } as never }
+  await app.cancelTurn()
+  assert.equal(port.cancelTurnCalls.length, 1)
+  assert.equal(view.renders.at(-1)?.notice, 'Cancel failed: busy')
+  // Disconnected: nothing is sent, the disconnect notice stays.
+  port.push({ type: 'stream/error', error: { code: 'internal', message: 'x', details: {} } } as never)
+  await flush()
+  port.cancelTurnResult = { ok: true, value: { accepted: true } }
+  await app.cancelTurn()
+  assert.equal(port.cancelTurnCalls.length, 1, 'no write while disconnected')
+  assert.equal(view.renders.at(-1)?.notice, 'Disconnected: stream error')
 })

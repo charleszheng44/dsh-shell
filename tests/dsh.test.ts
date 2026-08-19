@@ -35,6 +35,7 @@ function stubClient(overrides: {
       models: async () => ok({ current: { provider: 'p', model: 'm' }, routable: true, groups: [], failures: [] }),
       selectModel: async () => ok({ selected: { provider: 'p', model: 'm' } }),
       create: async () => ok({ sessionId: 's1', agentPreset: undefined } as never),
+      cancel: async () => ok({ accepted: true }),
     },
     respond: async () => ({ accepted: true }),
     events: {
@@ -464,4 +465,37 @@ test('createSession sends workspaceId when given, omits it for the host cwd, and
   assert.equal(noProject.ok, false)
   assert.deepEqual(payloads[1], {})
   assert.equal(calls, 2, 'the failed write was not retried')
+})
+
+test('cancelTurn maps sessions.cancel and never retries a transport throw', async () => {
+  let calls = 0
+  const client = stubClient({
+    sessions: {
+      cancel: async () => {
+        calls += 1
+        throw new Error('connection refused')
+      },
+    },
+  })
+  const port: DshPort = createDshPort(client)
+  const result = await port.cancelTurn('s1' as never)
+  assert.equal(result.ok, false)
+  assert.equal(calls, 1, 'a write must not be retried')
+})
+
+test('cancelTurn passes the session id through on success', async () => {
+  let payload: { sessionId: unknown } | undefined
+  const client = stubClient({
+    sessions: {
+      cancel: async (request) => {
+        payload = request
+        return ok({ accepted: true })
+      },
+    },
+  })
+  const port: DshPort = createDshPort(client)
+  const result = await port.cancelTurn('s9' as never)
+  assert.deepEqual(payload, { sessionId: 's9' })
+  assert.equal(result.ok, true)
+  if (result.ok) assert.equal(result.value.accepted, true)
 })
