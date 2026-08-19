@@ -706,16 +706,9 @@ export class App {
     approvals: readonly PendingApproval[]
   }>()
 
-  /** Ctrl+P: open the project picker (refreshes both lists first). A
-   *  trailing create row opens the path-entry modal. */
-  async openProjectPicker(): Promise<void> {
-    const request = ++this.pickerRequest
-    await this.refreshLists()
-    if (this.closed || request !== this.pickerRequest) return
-    const rows: readonly ProjectRow[] = [
-      ...this.state.projects,
-      { key: CREATE_PROJECT, title: '＋ Create new project' },
-    ]
+  /** Open the project picker over the given rows: the trailing create row
+   *  opens the path-entry modal (ESC returns to the refreshed picker). */
+  private showProjectPicker(rows: readonly ProjectRow[]): void {
     this.view.openProjectPicker(rows, (row) => {
       if (row.key === CREATE_PROJECT) {
         // Path entry modal; ESC returns to the refreshed project picker.
@@ -729,6 +722,18 @@ export class App {
     }, () => this.view.closePicker())
   }
 
+  /** Ctrl+P: open the project picker (refreshes both lists first). A
+   *  trailing create row opens the path-entry modal. */
+  async openProjectPicker(): Promise<void> {
+    const request = ++this.pickerRequest
+    await this.refreshLists()
+    if (this.closed || request !== this.pickerRequest) return
+    this.showProjectPicker([
+      ...this.state.projects,
+      { key: CREATE_PROJECT, title: '＋ Create new project' },
+    ])
+  }
+
   /** Ctrl+S (or after a project pick): open the session picker for the current project. */
   async openSessionPicker(): Promise<void> {
     const request = ++this.pickerRequest
@@ -736,7 +741,12 @@ export class App {
     if (this.closed || request !== this.pickerRequest) return
     const project = this.state.selectedProject
     if (project === undefined) {
-      this.view.openProjectPicker(this.state.projects, (row) => { void this.selectProject(row) }, () => this.view.closePicker())
+      // No project yet (Ctrl+S before any pick): show the project picker
+      // with its create action so creation stays reachable.
+      this.showProjectPicker([
+        ...this.state.projects,
+        { key: CREATE_PROJECT, title: '＋ Create new project' },
+      ])
       return
     }
     const rows: readonly SessionRow[] = [
@@ -772,11 +782,24 @@ export class App {
    *  abandoned. */
   async createProject(path: string): Promise<void> {
     if (this.closed) return
+    // A dead stream cannot create (and then attach): mirror attach's guard
+    // so the write is not issued into the void.
+    if (this.state.connection !== 'connected') {
+      this.setState({ notice: 'Disconnected: restart dsh-shell to reconnect' })
+      return
+    }
     const trimmed = path.trim()
-    if (trimmed === '') return
+    if (trimmed === '') {
+      // Enter on an empty path cancels like ESC: back to the picker.
+      await this.openProjectPicker()
+      return
+    }
     const result = await this.port.createWorkspace(trimmed, this.signal)
     if (this.closed) return
     if (!result.ok) {
+      // A stream death mid-write keeps the disconnect notice (the reopen's
+      // own refresh would clobber it with an RPC error).
+      if (this.state.connection !== 'connected') return
       // Reopen first: the picker's own refresh clears stale notices, so the
       // error is set after it to survive.
       await this.openProjectPicker()
@@ -792,12 +815,21 @@ export class App {
    *  session starts blank and the composer is ready to prompt. */
   async createSession(): Promise<void> {
     if (this.closed) return
+    // A dead stream cannot attach the fresh session: keep the picker open
+    // and explain, so a write cannot orphan a blank session on the host.
+    if (this.state.connection !== 'connected') {
+      this.setState({ notice: 'Disconnected: restart dsh-shell to reconnect' })
+      return
+    }
     this.view.closePicker()
     const project = this.state.selectedProject
     const workspaceId = project === undefined || project === 'all' ? undefined : project
     const result = await this.port.createSession(workspaceId, this.signal)
     if (this.closed) return
     if (!result.ok) {
+      // A stream death mid-write keeps the disconnect notice (the reopen's
+      // own refresh would clobber it with an RPC error).
+      if (this.state.connection !== 'connected') return
       // Reopen first: the picker's own refresh clears stale notices, so the
       // error is set after it to survive.
       await this.openSessionPicker()

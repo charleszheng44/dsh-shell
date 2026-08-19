@@ -769,14 +769,20 @@ test('create a project and a session end to end', async () => {
     await waitFor(() => createSessionCalls.length === 1, 'session.create call')
     assert.deepEqual(createSessionCalls[0], { workspaceId: 'w2' })
     await waitForStdout(stdoutRef, 'newproj / s2 / connected')
+    // ESC from the path input returns to the project picker with no write.
+    // The accumulated stdout holds every earlier frame, so it is reset here:
+    // from now on each wait must see FRESH output (the project picker now
+    // has four rows — All sessions, stub, newproj, create — so the create
+    // row needs three ArrowDowns).
+    stdoutRef.value = ''
     child.stdin?.write('\u0010') // Ctrl+P
     await waitForStdout(stdoutRef, 'Select project')
-    child.stdin?.write('\u001b[B\u001b[B\r')
+    child.stdin?.write('\u001b[B\u001b[B\u001b[B\r')
     await waitForStdout(stdoutRef, 'Create project — directory path')
     child.stdin?.write('\u001b') // ESC
     // ESC must flush alone before the next write: the reopened picker's
-    // 'Select project' text is stale in the accumulated stdout, so waiting
-    // for it cannot pace the writes, and a Ctrl+C sent inside pi's escape
+    // 'Select project' text was already matched above, so waiting for it
+    // again cannot pace the writes, and a Ctrl+C sent inside pi's escape
     // reassembly window would merge with the ESC into a meta-key sequence
     // the app never matches.
     await new Promise((resolve) => setTimeout(resolve, 300))

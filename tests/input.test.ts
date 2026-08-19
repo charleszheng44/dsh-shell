@@ -732,7 +732,7 @@ test('create project: picker row opens the path input, submit creates and opens 
   const { app, view } = await booted(port)
   await app.openProjectPicker()
   assert.equal(view.projectPickerRows?.at(-1)?.key, CREATE_PROJECT)
-  view.onProjectSelect?.(view.projectPickerRows?.at(-1) as never)
+  view.onProjectSelect?.((view.projectPickerRows as readonly ProjectRow[] | undefined)?.at(-1) as never)
   assert.equal(view.createInputPicks.length, 1)
   // The path is trimmed before the write; success selects the new project
   // and opens its session picker (only the create row for an empty project).
@@ -748,7 +748,7 @@ test('create project: failure shows a notice and reopens the picker; ESC just re
   port.createWorkspaceResult = { ok: false, error: { code: 'workspace-invalid-path', message: 'no such directory', details: { path: '/nope' } } as never }
   const { app, view } = await booted(port)
   await app.openProjectPicker()
-  view.onProjectSelect?.(view.projectPickerRows?.at(-1) as never)
+  view.onProjectSelect?.((view.projectPickerRows as readonly ProjectRow[] | undefined)?.at(-1) as never)
   const input = view.createInputPicks.at(-1)
   input?.onSubmit('/nope')
   await flush()
@@ -757,7 +757,7 @@ test('create project: failure shows a notice and reopens the picker; ESC just re
   assert.equal(port.createWorkspaceCalls.length, 1, 'a write is never retried')
   // ESC from the path input returns to the refreshed project picker without
   // any write.
-  view.onProjectSelect?.(view.projectPickerRows?.at(-1) as never)
+  view.onProjectSelect?.((view.projectPickerRows as readonly ProjectRow[] | undefined)?.at(-1) as never)
   view.createInputPicks.at(-1)?.onCancel()
   await flush()
   assert.ok(view.projectPickerRows !== undefined)
@@ -799,4 +799,76 @@ test('create session: All sessions omits the workspace; a failure reopens the pi
   assert.equal(view.renders.at(-1)?.notice, 'Create session failed: conflict')
   assert.ok(view.sessionPickerRows !== undefined, 'session picker reopens')
   assert.equal(port.createSessionCalls.length, 2)
+})
+
+test('create flows guard on a live stream and cancel on an empty path', async () => {
+  const port = new FakePort()
+  port.workspaces = [{ workspaceId: 'w1', path: '/tmp/p', title: 'p', sessionIds: ['s1'], createdAt: '', updatedAt: '' }]
+  port.sessions = [{ sessionId: 's1' }]
+  const { app, view } = await booted(port)
+  await app.selectProject({ key: 'w1' as never, title: 'p' })
+  // Enter on an empty path cancels like ESC: the picker reopens, no write.
+  await app.createProject('   ')
+  await flush()
+  assert.ok(view.projectPickerRows !== undefined, 'empty path returns to the picker')
+  assert.equal(port.createWorkspaceCalls.length, 0, 'empty path writes nothing')
+  // A stream death mid-write: the failure path keeps the disconnect notice
+  // instead of reopening (whose refresh would clobber it with an RPC error).
+  view.closePicker()
+  let release!: (value: Awaited<ReturnType<DshPort['createWorkspace']>>) => void
+  const original = port.createWorkspace.bind(port)
+  port.createWorkspace = (p) => new Promise((resolve) => { release = resolve }).then(() => original(p))
+  void app.createProject('/nope')
+  await flush()
+  port.push({ type: 'stream/error', error: { code: 'internal', message: 'x', details: {} } } as never)
+  await flush()
+  assert.equal(view.renders.at(-1)?.connection, 'disconnected')
+  release({ ok: false, error: { code: 'workspace-invalid-path', message: 'no such dir', details: { path: '/nope' } } as never })
+  await flush()
+  assert.equal(view.renders.at(-1)?.notice, 'Disconnected: stream error', 'the disconnect notice survives the failure')
+  assert.ok(view.projectPickerRows === undefined, 'no reopen while disconnected')
+  // A dead stream: the create rows must not issue a write — the picker
+  // stays open with the restart notice (an orphan blank session would
+  // otherwise appear on the host), and a project path cannot be written
+  // either.
+  await app.openSessionPicker()
+  view.onSessionSelect?.(view.sessionPickerRows?.at(-1) as never)
+  await flush()
+  assert.equal(port.createSessionCalls.length, 0, 'no session write while disconnected')
+  assert.equal(view.renders.at(-1)?.notice, 'Disconnected: restart dsh-shell to reconnect')
+  assert.ok(view.sessionPickerRows !== undefined, 'picker stays open')
+  await app.openProjectPicker()
+  view.onProjectSelect?.((view.projectPickerRows as readonly ProjectRow[] | undefined)?.at(-1) as never)
+  view.createInputPicks.at(-1)?.onSubmit('/tmp/newproj')
+  await flush()
+  assert.equal(port.createWorkspaceCalls.length, 1, 'no project write while disconnected')
+  assert.equal(view.renders.at(-1)?.notice, 'Disconnected: restart dsh-shell to reconnect')
+  // A create after shutdown is a no-op.
+  app.shutdown()
+  await app.createProject('/tmp/x')
+  await app.createSession()
+  assert.equal(port.createWorkspaceCalls.length, 1, 'create after shutdown is a no-op')
+  assert.equal(port.createSessionCalls.length, 0)
+})
+
+test('create session succeeds but attach is refused by a mid-flight disconnect', async () => {
+  const port = new FakePort()
+  port.workspaces = [{ workspaceId: 'w1', path: '/tmp/p', title: 'p', sessionIds: ['s1'], createdAt: '', updatedAt: '' }]
+  port.sessions = [{ sessionId: 's1' }]
+  const { app, view } = await booted(port)
+  await app.selectProject({ key: 'w1' as never, title: 'p' })
+  // Gate the write so the stream can die while it is in flight.
+  let release!: (value: Awaited<ReturnType<DshPort['createSession']>>) => void
+  const original = port.createSession.bind(port)
+  port.createSession = (workspaceId) => new Promise((resolve) => { release = resolve }).then(() => original(workspaceId))
+  view.onSessionSelect?.(view.sessionPickerRows?.at(-1) as never)
+  await flush()
+  port.push({ type: 'stream/error', error: { code: 'internal', message: 'x', details: {} } } as never)
+  await flush()
+  assert.equal(view.renders.at(-1)?.connection, 'disconnected')
+  release({ ok: true, value: { sessionId: 's-new' as never } })
+  await flush()
+  assert.equal(port.createSessionCalls.length, 1, 'the write went out')
+  assert.equal(view.renders.at(-1)?.attachment.phase, 'none', 'no attach while disconnected')
+  assert.equal(view.renders.at(-1)?.notice, 'Disconnected: restart dsh-shell to reconnect')
 })
