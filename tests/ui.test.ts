@@ -10,7 +10,7 @@ import { Container, Markdown, getCapabilities, setCapabilities, visibleWidth as 
 
 import { PickerFrame, TranscriptList, approvalCardText, assistantMarkdown, canEditQueued, deepDivingText, editorPolicy, editorTextAfterSubmit, footerHints, formatTokens, headerText, isWorking, neutralizeLinks, pickerLabel, questionCardText, queuedText, reasoningText, reconcileRows, sessionPickerItems, statsText, stripFakeCursorCell, terminalSafeText, toolPreviewText } from '../src/ui.js'
 import type { TranscriptRow } from '../src/transcript.js'
-import { contextStyle } from '../src/theme.js'
+import { contextStyle, statsCacheStyle, statsInputStyle, statsModelStyle, statsOutputStyle } from '../src/theme.js'
 
 const identity = (text: string): string => text
 const markdownTheme = {
@@ -344,14 +344,36 @@ test('formatTokens matches pi footer formatting', () => {
 })
 
 test('contextStyle colors past the mist warning and error thresholds', () => {
-  const dimBase = contextStyle(70, 'x')
-  assert.ok(dimBase.includes('\x1b[2m'), '70% stays dim')
+  const healthy = contextStyle(70, 'x')
+  assert.ok(!healthy.includes('\x1b[2m'), '70% is not dim (readability)')
+  assert.ok(healthy.endsWith('\x1b[39m'), 'healthy ends with the fg reset')
   const warning = contextStyle(70.001, 'x')
-  assert.ok(warning !== dimBase && warning.endsWith('\x1b[39m'), 'just past 70% warns amber')
+  assert.ok(warning !== healthy && warning.endsWith('\x1b[39m'), 'just past 70% warns amber')
   const stillWarning = contextStyle(90, 'x')
   assert.equal(stillWarning, warning, '90% still amber')
   const error = contextStyle(90.001, 'x')
   assert.ok(error !== warning && error.endsWith('\x1b[39m'), 'past 90% turns rose')
+})
+
+test('statsText colors each part: input blue, output shimmer, cache subtle, model bold', () => {
+  const attached = {
+    phase: 'attached',
+    modelLabel: 'DeepSeek · DeepSeek-V4-Flash (Max)',
+    stats: {
+      uncachedInputTokens: 226206,
+      outputTokens: 142951,
+      cacheReadTokens: 36564224,
+      cacheWriteTokens: 0,
+      pressureTokens: 346771,
+      contextWindow: 1000000,
+    },
+  } as never
+  const text = statsText(attached)
+  assert.ok(text.includes(statsInputStyle('↑226k')), 'input tokens in blue')
+  assert.ok(text.includes(statsOutputStyle('↓143k')), 'output tokens in shimmer')
+  assert.ok(text.includes(statsCacheStyle('R37M')), 'cache read in subtle')
+  assert.ok(text.includes(statsModelStyle('DeepSeek · DeepSeek-V4-Flash (Max)')), 'model label bold and bright')
+  assert.ok(text.includes(contextStyle(34.6771, '34.7%/1.0M')), 'context usage keeps its status color')
 })
 
 test('statsText renders a pi-style usage line only while attached', () => {
@@ -371,7 +393,7 @@ test('statsText renders a pi-style usage line only while attached', () => {
   const text = statsText(attached)
   assert.ok(text.includes('↑226k'), text)
   assert.ok(text.includes('↓143k'), text)
-  assert.ok(text.includes('· R37M'), text)
+  assert.ok(text.includes('R37M'), text)
   assert.ok(text.includes('34.7%/1.0M'), text)
   // The model label renders right next to the context usage.
   const labeled = statsText({ phase: 'attached', modelLabel: 'Provider One · Model Two (High)', stats: { uncachedInputTokens: 226206, outputTokens: 142951, cacheReadTokens: 36564224, cacheWriteTokens: 0, pressureTokens: 346771, contextWindow: 1000000 } } as never)
@@ -390,7 +412,7 @@ test('statsText renders a pi-style usage line only while attached', () => {
     },
   } as never
   const bare = statsText(noCache)
-  assert.ok(bare.includes('↑100 · ↓50'), bare)
+  assert.ok(bare.includes('↑100') && bare.includes('↓50'), bare)
   assert.ok(!bare.includes('R'), bare)
   assert.ok(bare.includes('50.0%/1.0k'), bare)
   // Cache writes show the W segment; over-100% context stays bounded text.
@@ -406,7 +428,7 @@ test('statsText renders a pi-style usage line only while attached', () => {
     },
   } as never
   const wrote = statsText(withWrite)
-  assert.ok(wrote.includes('· R30 · W40'), wrote)
+  assert.ok(wrote.includes('R30') && wrote.includes('W40'), wrote)
   assert.ok(wrote.includes('200.0%/1.0k'), wrote)
   // Writes only: no "R0" segment, exactly like pi's independent gates.
   const writesOnly = {
@@ -421,7 +443,7 @@ test('statsText renders a pi-style usage line only while attached', () => {
     },
   } as never
   const onlyWrite = statsText(writesOnly)
-  assert.ok(onlyWrite.includes('· W40'), onlyWrite)
+  assert.ok(onlyWrite.includes('W40'), onlyWrite)
   assert.ok(!onlyWrite.includes('R'), onlyWrite)
   // Zero window stats are treated as missing (no line at all).
   const zeroWindow = {

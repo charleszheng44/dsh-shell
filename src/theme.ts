@@ -146,12 +146,21 @@ export function footerStyle(text: string): string {
   return dim(text)
 }
 
-/** Context-usage coloring: the reference's amber past 70%, rose past 90%. */
+/** Context-usage coloring: sage while healthy, the reference's amber past
+ *  70%, rose past 90%. */
 export function contextStyle(percent: number, text: string): string {
   if (percent > 90) return mistRose(text)
   if (percent > 70) return mistAmber(text)
-  return dim(text)
+  return mistSage(text)
 }
+
+/** Footer stats parts, each in its own readable color: input tokens in
+ *  interaction blue, output in the brighter shimmer, cache and the provider
+ *  neutral, the model label bold and bright. */
+export const statsInputStyle = (text: string): string => mistBlue(text)
+export const statsOutputStyle = (text: string): string => mistShimmer(text)
+export const statsCacheStyle = (text: string): string => mistSubtle(text)
+export const statsModelStyle = (text: string): string => bold(mistShimmer(text))
 
 /** Picker panel background: the 256-color index 236 (the bubble-family
  *  step), so the overlay separates from the transcript. */

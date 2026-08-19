@@ -36,6 +36,10 @@ import {
   composerBorderStyle,
   contextStyle,
   editorTheme,
+  statsCacheStyle,
+  statsInputStyle,
+  statsModelStyle,
+  statsOutputStyle,
   footerStyle,
   headerStyle,
   markdownTheme,
@@ -1157,14 +1161,18 @@ export function statsText(attachment: AppState['attachment']): string {
   const percent = (pressureTokens / contextWindow) * 100
   // R and W gates are independent, like pi's footer: no "R0" when only cache
   // writes exist.
-  const read = cacheReadTokens > 0 ? ` · R${formatTokens(cacheReadTokens)}` : ''
-  const write = cacheWriteTokens > 0 ? ` · W${formatTokens(cacheWriteTokens)}` : ''
+  // R and W gates are independent, like pi's footer: no "R0" when only cache
+  // writes exist.
+  const read = cacheReadTokens > 0 ? `${footerStyle(' · ')}${statsCacheStyle(`R${formatTokens(cacheReadTokens)}`)}` : ''
+  const write = cacheWriteTokens > 0 ? `${footerStyle(' · ')}${statsCacheStyle(`W${formatTokens(cacheWriteTokens)}`)}` : ''
   const context = contextStyle(percent, `${percent.toFixed(1)}%/${formatTokens(contextWindow)}`)
-  // The reference's byline separates the stats parts with U+00B7; the
-  // current model (and effort level) sits right next to the context usage.
+  // The reference's byline separates the stats parts with U+00B7, each part
+  // in its own color (input blue, output shimmer, cache subtle, model bold);
+  // the current model (and effort level) sits right next to the context
+  // usage.
   const model = attachment.modelLabel
-  const stats = `${footerStyle(`↑${formatTokens(uncachedInputTokens)} · ↓${formatTokens(outputTokens)}${read}${write} `)}${context}`
-  return model === undefined ? stats : `${stats}${footerStyle(` · ${model}`)}`
+  const stats = `${statsInputStyle(`↑${formatTokens(uncachedInputTokens)}`)}${footerStyle(' · ')}${statsOutputStyle(`↓${formatTokens(outputTokens)}`)}${read}${write}${footerStyle(' ')}${context}`
+  return model === undefined ? stats : `${stats}${footerStyle(' · ')}${statsModelStyle(model)}`
 }
 
 /** Codex-style queue preview panel: a bulleted section in the footer under
