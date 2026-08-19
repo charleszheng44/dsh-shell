@@ -445,16 +445,16 @@ test('queuedText renders the codex-style preview panel', () => {
   const one = queuedText({ phase: 'attached', pendingQuestions: [], queue: [item('m1', 'fix the parser')] } as never)
   assert.ok(one.includes('• Queued follow-up inputs'), one)
   assert.ok(one.includes('↳ fix the parser'), one)
-  assert.ok(one.includes('Ctrl+U edit last queued message'), one)
+  assert.ok(one.includes('Ctrl+U edit · Ctrl+Y steer last queued message'), one)
   // While a question is open the edit hint disappears: the gate is off and
   // the hint must not advertise a key that would clobber the answer draft.
   const answering = queuedText({ phase: 'attached', pendingQuestions: [{ rpcId: 'q1' }], queue: [item('m1', 'fix the parser')] } as never)
   assert.ok(answering.includes('• Queued follow-up inputs'), answering)
-  assert.ok(!answering.includes('Ctrl+U edit last queued message'), answering)
+  assert.ok(!answering.includes('Ctrl+U edit · Ctrl+Y steer'), answering)
   // Same while a prompt submission is in flight (the gate is off then).
   const sending = queuedText({ phase: 'attached', sending: true, pendingQuestions: [], queue: [item('m1', 'fix the parser')] } as never)
   assert.ok(sending.includes('• Queued follow-up inputs'), sending)
-  assert.ok(!sending.includes('Ctrl+U edit last queued message'), sending)
+  assert.ok(!sending.includes('Ctrl+U edit · Ctrl+Y steer'), sending)
   // Every queued input is listed, in order.
   const many = queuedText({ phase: 'attached', pendingQuestions: [], queue: [item('m1', 'first'), item('m2', 'second')] } as never)
   assert.ok(many.indexOf('↳ first') < many.indexOf('↳ second'), many)

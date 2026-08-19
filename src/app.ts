@@ -1074,6 +1074,34 @@ export class App {
     this.setState({ notice: `Model: ${selection.model}${effort}` })
   }
 
+  /** Steer the last queued message into the running agent: the host removes
+   *  it from the queue and steers the agent with it immediately, then
+   *  broadcasts a fresh session/queue snapshot. Rejected with
+   *  steer-unavailable when no turn accepts steering. */
+  async steerQueuedItem(): Promise<boolean> {
+    const attachment = this.state.attachment
+    if (this.closed || this.state.connection !== 'connected' || attachment.phase !== 'attached') return false
+    const queued = attachment.queue.filter((item) => item.placement === 'queued')
+    const last = queued.at(-1)
+    if (last === undefined) return false
+    const sessionId = attachment.sessionId
+    const generation = attachment.generation
+    const result = await this.port.updateQueue(sessionId, last.id, { kind: 'steer' }, this.signal)
+    const current = this.state.attachment
+    if (this.closed
+      || this.state.connection !== 'connected'
+      || current.phase !== 'attached'
+      || current.sessionId !== sessionId
+      || current.generation !== generation) {
+      return false
+    }
+    if (!result.ok) {
+      this.setState({ notice: result.error.message })
+      return false
+    }
+    return true
+  }
+
   /** Pop the last queued message back into the composer (Codex's edit-last-
    *  queued): remove it from the host queue and return its raw text, or
    *  undefined when there is nothing queued or the removal is rejected. */

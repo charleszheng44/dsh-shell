@@ -617,3 +617,32 @@ test('openModelPicker lists choices and applies the selection with effort', asyn
   await app.openModelPicker()
   assert.equal(view.renders.at(-1)?.notice, 'boom')
 })
+
+test('steerQueuedItem steers the last queued message', async () => {
+  const port = new FakePort()
+  const { app, view } = await booted(port)
+  await attach(app, port)
+  port.push({ type: 'session/queue', sessionId: 's1', items: [
+    { id: 'm1', placement: 'queued', message: { id: 'm1', role: 'user', content: [{ type: 'text', text: 'a' }], source: { kind: 'user' } } },
+    { id: 'm2', placement: 'queued', message: { id: 'm2', role: 'user', content: [{ type: 'text', text: 'b' }], source: { kind: 'user' } } },
+  ] } as never)
+  await flush()
+  assert.equal(await app.steerQueuedItem(), true)
+  assert.equal(port.updateQueueCalls.length, 1)
+  const call = port.updateQueueCalls[0]
+  assert.equal(call?.itemId, 'm2')
+  assert.deepEqual(call?.action, { kind: 'steer' })
+  // Empty queue: no call.
+  port.push({ type: 'session/queue', sessionId: 's1', items: [] } as never)
+  await flush()
+  assert.equal(await app.steerQueuedItem(), false)
+  assert.equal(port.updateQueueCalls.length, 1)
+  // Rejection surfaces the host's notice (e.g. steer-unavailable).
+  port.push({ type: 'session/queue', sessionId: 's1', items: [
+    { id: 'm3', placement: 'queued', message: { id: 'm3', role: 'user', content: [{ type: 'text', text: 'c' }], source: { kind: 'user' } } },
+  ] } as never)
+  await flush()
+  port.updateQueueResult = { ok: false, error: { code: 'steer-unavailable' as never, message: 'current turn no longer accepts steering', details: {} } }
+  assert.equal(await app.steerQueuedItem(), false)
+  assert.equal(view.renders.at(-1)?.notice, 'current turn no longer accepts steering')
+})

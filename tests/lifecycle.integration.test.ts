@@ -324,7 +324,8 @@ function startQueueHost(): Promise<{
           const action = parsed.payload?.action
           updateQueueCalls.push({ sessionId: parsed.payload?.sessionId ?? '', itemId: String(itemId), action })
           const index = queue.findIndex((item) => item.id === itemId)
-          if (index >= 0 && typeof action === 'object' && action !== null && (action as { kind?: string }).kind === 'remove') {
+          const kind = typeof action === 'object' && action !== null ? (action as { kind?: string }).kind : undefined
+          if (index >= 0 && (kind === 'remove' || kind === 'steer')) {
             queue.splice(index, 1)
           }
           pushQueueSnapshot()
@@ -571,6 +572,35 @@ test('Ctrl+U pops the last queued message into the composer end to end', async (
       mode: 'queue',
       content: [{ type: 'text', text: 'second' }],
     })
+    // Ctrl+Y steers the remaining queued message into the running agent:
+    // the host records the steer, removes it, and the panel clears.
+    child.stdin?.write('\u0019') // Ctrl+Y
+    await waitFor(() => updateQueueCalls.length === 2, 'steer call')
+    assert.equal(updateQueueCalls[1]?.itemId, 'msg-1')
+    assert.deepEqual(updateQueueCalls[1]?.action, { kind: 'steer' })
+    await waitFor(() => {
+      const segments: Array<{ row: number; text: string }> = []
+      let row = 1
+      let last = 0
+      const position = /\x1b\[(\d+);1H/g
+      for (let m = position.exec(stdoutRef.value); m !== null; m = position.exec(stdoutRef.value)) {
+        const text = stdoutRef.value.slice(last, m.index)
+        if (text !== '') segments.push({ row, text })
+        row = Number(m[1])
+        last = m.index + m[0].length
+      }
+      const lastWrite = (text: string): string => {
+        const parts = text.split('\x1b[2K')
+        return parts.at(-1) ?? ''
+      }
+      // The accumulated stream keeps every frame; judge the FINAL state per
+      // row (the last write wins).
+      const byRow = new Map<number, string>()
+      for (const segment of segments) {
+        byRow.set(segment.row, lastWrite(segment.text))
+      }
+      return ![...byRow.values()].some((text) => text.includes('fix the parser'))
+    }, 'queue panel cleared after steer')
     // The host's approval ask renders as a card; Ctrl+A answers it by
     // echoing the frame's rpcId with the allowed-once outcome.
     await waitForStdout(stdoutRef, 'Approval: Bash')

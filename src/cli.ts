@@ -146,6 +146,7 @@ export async function main(argv: readonly string[]): Promise<number> {
   let model: () => void = () => {}
   let approve: (approvalId: string) => void = () => {}
   let reject: (approvalId: string) => void = () => {}
+  let steerQueued: () => Promise<void> = async () => {}
   const view = new TerminalView(
     () => { void app.openProjectPicker() },
     () => { void app.openSessionPicker() },
@@ -155,6 +156,7 @@ export async function main(argv: readonly string[]): Promise<number> {
     () => model(),
     (approvalId) => approve(approvalId),
     (approvalId) => reject(approvalId),
+    () => steerQueued(),
   )
   const app = new App(createDshPort(new NodeApiClient(origin)), view, controller.signal)
   submit = (text) => app.submit(text)
@@ -162,6 +164,7 @@ export async function main(argv: readonly string[]): Promise<number> {
   model = () => { void app.openModelPicker() }
   approve = (approvalId) => { void app.answerApproval(approvalId, 'allowed-once') }
   reject = (approvalId) => { void app.answerApproval(approvalId, 'rejected') }
+  steerQueued = async () => { await app.steerQueuedItem() }
 
   const shutdown = createLifecycle({
     abort: () => controller.abort(),

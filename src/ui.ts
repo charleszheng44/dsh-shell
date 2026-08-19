@@ -527,6 +527,9 @@ export class TerminalView implements AppView {
   /** Reentry guard: a second Ctrl+U while a pop is in flight would target the
    *  same item id (the fresh snapshot only arrives after the host removes). */
   private editQueuedBusy = false
+  /** Reentry guard for the steer action (Ctrl+Y): shares the queue-mutation
+   *  window with the pop, so one in-flight mutation blocks the other. */
+  private steerQueuedBusy = false
 
   constructor(
     private readonly onProject: () => void,
@@ -537,6 +540,7 @@ export class TerminalView implements AppView {
     private readonly onModel: () => void,
     private readonly onApprove: (approvalId: string) => void,
     private readonly onReject: (approvalId: string) => void,
+    private readonly onSteerQueued: () => Promise<void>,
   ) {
     this.editor.disableSubmit = true
     this.questionBox.addChild(this.questionText)
@@ -643,6 +647,21 @@ export class TerminalView implements AppView {
           return { consume: true }
         }
         return undefined
+      }
+      if (matchesKey(data, 'ctrl+y')) {
+        // Steer the last queued message into the running agent. Gated like
+        // the pop (attached, live, no overlay/question/submission, and no
+        // other queue mutation in flight); otherwise the key falls through
+        // to the editor's native yank.
+        if (this.latestState === undefined
+          || !canEditQueued(this.latestState, this.overlay !== undefined, this.editQueuedBusy || this.steerQueuedBusy)) {
+          return undefined
+        }
+        this.steerQueuedBusy = true
+        void this.onSteerQueued().finally(() => {
+          this.steerQueuedBusy = false
+        })
+        return { consume: true }
       }
       if (matchesKey(data, 'ctrl+u')) {
         // Codex's edit-last-queued: pop the last queued message back into the
@@ -1073,7 +1092,7 @@ export function queuedText(attachment: AppState['attachment']): string {
   // in flight: the Ctrl+U gate is off then, and the hint must not advertise
   // a key that would clobber the answer draft or remove the wrong item.
   if (attachment.pendingQuestions.length === 0 && attachment.sending !== true) {
-    lines.push('    Ctrl+U edit last queued message')
+    lines.push('    Ctrl+U edit · Ctrl+Y steer last queued message')
   }
   return lines.map((line) => footerStyle(line)).join('\n')
 }
