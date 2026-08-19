@@ -528,14 +528,27 @@ test('TranscriptList caches row lines and refreshes transients', () => {
   assert.equal(rowRenders, 3)
   // Transients render fresh every frame; a transient layout change
   // recomputes all rows (the tail shifted).
-  list.setTransients([{ render: () => ['live'], invalidate: () => {} }])
+  const live = { render: () => ['live'], invalidate: () => {} }
+  list.setTransients([live])
   assert.deepEqual(list.render(40), ['row', 'row', 'live'])
   assert.equal(rowRenders, 5)
+  // An UNCHANGED transient set (the steady streaming state) must not
+  // recompute rows — this is the primary per-frame perf property.
+  list.setTransients([live])
+  assert.deepEqual(list.render(40), ['row', 'row', 'live'])
+  assert.equal(rowRenders, 5)
+  // A length change marks the new indices dirty and never reads past the
+  // new length.
+  const d = counter()
   list.setTransients([])
-  assert.deepEqual(list.render(40), ['row', 'row'])
-  assert.equal(rowRenders, 7)
+  list.setRows([a, c, d])
+  assert.deepEqual(list.render(40), ['row', 'row', 'row'])
+  assert.equal(rowRenders, 8)
+  list.setRows([a])
+  assert.deepEqual(list.render(40), ['row'])
+  assert.equal(rowRenders, 8)
   // A width change recomputes everything.
-  assert.equal(list.render(80).length, 2)
+  assert.equal(list.render(80).length, 1)
   assert.equal(rowRenders, 9)
 })
 
