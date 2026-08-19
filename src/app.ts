@@ -846,23 +846,39 @@ export class App {
   /** ESC: stop the attached session's active turn. The host preserves the
    *  pending inbox work (it resumes in FIFO order after the cancellation
    *  settles); the 'Turn cancelled' notice clears when the turn/end arrives.
-   *  A write: never retried. */
+   *  A write: never retried. Gated on an OPEN turn (not mere prompt
+   *  admission) with no pending ask: while a question or approval is open,
+   *  the composer answers it and the host is waiting — ESC must not abandon
+   *  that interaction. */
+  private cancelTurnBusy = false
   async cancelTurn(): Promise<void> {
-    if (this.closed) return
+    if (this.closed || this.cancelTurnBusy) return
     const attachment = this.state.attachment
     if (this.state.connection !== 'connected'
       || attachment.phase !== 'attached'
-      || attachment.turnActive === undefined) {
+      || attachment.turnActive === undefined
+      || attachment.pendingQuestions.length > 0
+      || attachment.pendingApprovals.length > 0) {
       return
     }
     const sessionId = attachment.sessionId
-    const result = await this.port.cancelTurn(sessionId, this.signal)
-    if (this.closed) return
-    if (!result.ok) {
-      this.setState({ notice: `Cancel failed: ${result.error.message}` })
-      return
+    this.cancelTurnBusy = true
+    try {
+      const result = await this.port.cancelTurn(sessionId, this.signal)
+      if (this.closed) return
+      if (!result.ok) {
+        this.setState({ notice: `Cancel failed: ${result.error.message}` })
+        return
+      }
+      // The turn may have ended while the write was in flight: only announce
+      // the stop while the turn is still open, so the notice cannot linger
+      // past a turn/end that already retired it.
+      const current = this.state.attachment
+      if (current.phase !== 'attached' || current.sessionId !== sessionId || current.turnActive === undefined) return
+      this.setState({ notice: 'Turn cancelled' })
+    } finally {
+      this.cancelTurnBusy = false
     }
-    this.setState({ notice: 'Turn cancelled' })
   }
 
   /** Attach to a session: load one tail history page and project it. */

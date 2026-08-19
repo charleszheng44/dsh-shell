@@ -922,3 +922,51 @@ test('ESC cancel: gated on a live turn, connected stream, and failure notice', a
   assert.equal(port.cancelTurnCalls.length, 1, 'no write while disconnected')
   assert.equal(view.renders.at(-1)?.notice, 'Disconnected: stream error')
 })
+
+test('ESC cancel: gated while a question or approval is open, and double-ESC sends once', async () => {
+  const port = new FakePort()
+  const { app, view } = await booted(port)
+  await attach(app, port)
+  port.push({ type: 'session/event', sessionId: 's1', event: { type: 'turn/start', seq: 2, time: 0, data: { turn: 0 } } } as never)
+  await flush()
+  // A pending approval (or question) takes the composer: ESC must not
+  // abandon the host's ask.
+  port.push({ type: 'approval/requested', sessionId: 's1', rpcId: 'r1', approvalId: 'a1', toolName: 'bash' } as never)
+  await flush()
+  await app.cancelTurn()
+  assert.equal(port.cancelTurnCalls.length, 0, 'no cancel while an approval is open')
+  // Double-ESC: only one write goes out.
+  let release!: (value: Awaited<ReturnType<DshPort['cancelTurn']>>) => void
+  const original = port.cancelTurn.bind(port)
+  port.cancelTurn = (sessionId) => new Promise((resolve) => { release = resolve }).then(() => original(sessionId))
+  port.push({ type: 'approval/resolved', sessionId: 's1', approvalId: 'a1' } as never)
+  await flush()
+  void app.cancelTurn()
+  void app.cancelTurn()
+  await flush()
+  release({ ok: true, value: { accepted: true } })
+  await flush()
+  assert.equal(port.cancelTurnCalls.length, 1, 'the in-flight guard blocks the second ESC')
+  assert.equal(view.renders.at(-1)?.notice, 'Turn cancelled')
+})
+
+test('ESC cancel: a turn/end during the write retires the notice (no lingering)', async () => {
+  const port = new FakePort()
+  const { app, view } = await booted(port)
+  await attach(app, port)
+  port.push({ type: 'session/event', sessionId: 's1', event: { type: 'turn/start', seq: 2, time: 0, data: { turn: 0 } } } as never)
+  await flush()
+  // The turn ends naturally while the cancel RPC is in flight.
+  let release!: (value: Awaited<ReturnType<DshPort['cancelTurn']>>) => void
+  const original = port.cancelTurn.bind(port)
+  port.cancelTurn = (sessionId) => new Promise((resolve) => { release = resolve }).then(() => original(sessionId))
+  void app.cancelTurn()
+  await flush()
+  port.push({ type: 'session/event', sessionId: 's1', event: { type: 'turn/end', seq: 3, time: 0, data: { turn: 0 } } } as never)
+  await flush()
+  release({ ok: true, value: { accepted: true } })
+  await flush()
+  // The turn already ended: no 'Turn cancelled' to linger past its settle.
+  assert.equal(view.renders.at(-1)?.notice, undefined)
+  assert.equal(port.cancelTurnCalls.length, 1, 'the write still went out')
+})

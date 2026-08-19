@@ -772,11 +772,16 @@ export class TerminalView implements AppView {
         return { consume: true }
       }
       if (matchesKey(data, 'esc')) {
-        // ESC cancels the running turn (Codex-style stop). With no turn in
-        // flight, or with a picker/modal open, the key falls through — the
-        // overlays cancel themselves, and the editor keeps its native ESC.
+        // ESC cancels the running turn (Codex-style stop). Only while an
+        // OPEN turn runs with no pending ask and no overlay: prompt
+        // admission has no turn to stop, the overlays cancel themselves,
+        // and a question/approval is the host waiting on the composer.
         const state = this.latestState
-        if (this.overlay === undefined && state !== undefined && isWorking(state)) {
+        if (this.overlay === undefined && state !== undefined && state.connection === 'connected'
+          && state.attachment.phase === 'attached'
+          && state.attachment.turnActive !== undefined
+          && state.attachment.pendingQuestions.length === 0
+          && state.attachment.pendingApprovals.length === 0) {
           this.onCancelTurn()
           return { consume: true }
         }
@@ -1240,8 +1245,9 @@ export function footerHints(attachment: AppState['attachment']): string {
   const question = attachment.phase === 'attached' && attachment.pendingQuestions.length > 0
   const approval = attachment.phase === 'attached' && attachment.pendingApprovals.length > 0
   const keys = 'Ctrl+P project  Ctrl+S session  Ctrl+O model  Ctrl+C quit'
-  const working = attachment.phase === 'attached'
-    && (attachment.sending || attachment.turnActive !== undefined)
+  // 'ESC stop turn' only while an open turn runs: mere prompt admission
+  // has no turn to stop, and pending asks take the mode line.
+  const working = attachment.phase === 'attached' && attachment.turnActive !== undefined
   const mode = approval
     ? 'Ctrl+A allow once · Ctrl+R reject · Enter send · ↑ history'
     : question
