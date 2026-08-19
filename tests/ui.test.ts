@@ -8,7 +8,7 @@ import { test } from 'node:test'
 
 import { Container, Markdown, getCapabilities, setCapabilities, visibleWidth as visibleWidthOf, type Component } from '@earendil-works/pi-tui'
 
-import { PickerFrame, TranscriptList, approvalCardText, assistantMarkdown, canEditQueued, deepDivingText, editorPolicy, editorTextAfterSubmit, footerHints, formatTokens, headerText, isWorking, neutralizeLinks, pickerLabel, questionCardText, queuedText, reasoningText, reconcileRows, sessionPickerItems, statsText, terminalSafeText, toolPreviewText } from '../src/ui.js'
+import { PickerFrame, TranscriptList, approvalCardText, assistantMarkdown, canEditQueued, deepDivingText, editorPolicy, editorTextAfterSubmit, footerHints, formatTokens, headerText, isWorking, neutralizeLinks, pickerLabel, questionCardText, queuedText, reasoningText, reconcileRows, sessionPickerItems, statsText, stripFakeCursorCell, terminalSafeText, toolPreviewText } from '../src/ui.js'
 import type { TranscriptRow } from '../src/transcript.js'
 import { contextStyle } from '../src/theme.js'
 
@@ -940,4 +940,24 @@ test('toolPreviewText shows 10 lines, a +N note, and names truncation', () => {
   // A truncated output whose content fits the preview (char cap on a newline)
   // still surfaces the bound.
   assert.equal(toolPreviewText('tiny\n… (output truncated)', true), 'tiny\n… (output truncated)')
+})
+
+test('stripFakeCursorCell removes pi\'s fake editor cursor, nothing else', () => {
+  // Cursor at end of text: the inverse space and its resets go, the cell
+  // stays plain (the row's trailing SEGMENT_RESET survives).
+  assert.equal(
+    stripFakeCursorCell('❯ hello\x1b[7m \x1b[0m\x1b[0m\x1b]8;;\x07'),
+    '❯ hello \x1b[0m\x1b]8;;\x07',
+  )
+  // Cursor on a grapheme: the character is preserved, the highlight goes.
+  assert.equal(stripFakeCursorCell('he\x1b[7ml\x1b[0mlo'), 'hello')
+  // Multi-code-unit graphemes survive whole.
+  assert.equal(stripFakeCursorCell('\x1b[7m👨\u200d👩\u200d👧\u200d👦\x1b[0m'), '👨\u200d👩\u200d👧\u200d👦')
+  // Mouse selection and search highlights close with \x1b[27m, not \x1b[0m:
+  // they must pass through untouched, including a trailing row reset.
+  const selection = 'a\x1b[7mbc\x1b[27md\x1b[0m\x1b]8;;\x07'
+  assert.equal(stripFakeCursorCell(selection), selection)
+  // Plain buffers pass through byte for byte.
+  const plain = '\x1b[38;2;94;102;115m❯ \x1b[0m\x1b]8;;\x07'
+  assert.equal(stripFakeCursorCell(plain), plain)
 })

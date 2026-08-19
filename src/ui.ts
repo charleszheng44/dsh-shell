@@ -466,13 +466,42 @@ export function toolPreviewText(output: string, truncated: boolean): string {
     : `${preview.join('\n')}\n… +${remaining} more lines`
 }
 
+/**
+ * Terminal whose output strips pi's fake editor cursor cell. pi renders the
+ * editor's cursor as an inverse-video cell (`\x1b[7m…\x1b[0m`) on every frame,
+ * so blinking the hardware cursor alone is invisible on terminals whose cursor
+ * block looks like that cell (macOS Terminal renders both as the same solid
+ * block). Stripping the fake cell leaves the cursor cell plain, and the
+ * toggled hardware cursor becomes the only block: it visibly appears and
+ * disappears. The zero-width cursor marker pi emits just before the cell is
+ * untouched, so the TUI still positions the hardware cursor (IME placement
+ * included).
+ */
+// pi's fake cursor is `\x1b[7m` + one grapheme + `\x1b[0m`, and every row
+// carries a trailing reset, so a plain `\x1b[7m…\x1b[0m` strip would also eat
+// mouse-selection and search highlights — those close with `\x1b[27m` instead
+// of `\x1b[0m`. The negative lookahead keeps every such span intact.
+const FAKE_CURSOR_CELL = /\x1b\[7m((?:(?!\x1b\[27m).)*?)\x1b\[0m/g
+
+/** Strip pi's fake editor cursor cell from one TUI output buffer (used by
+ *  CursorFlashTerminal; exported for tests). */
+export function stripFakeCursorCell(output: string): string {
+  return output.replace(FAKE_CURSOR_CELL, '$1')
+}
+
+class CursorFlashTerminal extends ProcessTerminal {
+  override write(data: string): void {
+    super.write(stripFakeCursorCell(data))
+  }
+}
+
 /** Terminal view: owns the Pi TUI, renders AppState, and shows pickers. */
 export class TerminalView implements AppView {
-  private readonly terminal = new ProcessTerminal()
   // pi hides the hardware cursor by default and renders a static fake block
   // instead; passing true shows the real cursor (positioned at the editor's
   // marker every frame). The blink is done in software (start() toggles the
   // hardware cursor's visibility) so it works on every terminal.
+  private readonly terminal = new CursorFlashTerminal()
   private readonly tui = new TuiAltScreen(this.terminal, true)
   private readonly transcript = new TranscriptList()
   private readonly partial = new Markdown('', 1, 0, markdownTheme)
@@ -742,12 +771,12 @@ export class TerminalView implements AppView {
     // attached session enables input.
     this.tui.setFocus(null)
     this.tui.start()
-    // Codex-style blinking cursor. Terminals that ignore the DECSCUSR
-    // style sequence (macOS Terminal) would keep a steady cursor, so the
-    // blink is done in software: a timer toggles the hardware cursor's
-    // visibility every half-second, flashing between the terminal's block
-    // and pi's hollow reverse-video cell. DECSCUSR 2 (steady block) keeps
-    // terminals that DO honor the sequence from double-blinking.
+    // Codex/tmux-style blinking cursor: a timer flips the hardware cursor's
+    // visibility every half second, so the block appears and disappears.
+    // CursorFlashTerminal strips the editor's fake inverse-video cell, which
+    // would otherwise stay visible and hide the flash on terminals whose
+    // cursor block looks like it. DECSCUSR 2 (steady block) keeps terminals
+    // that DO honor the sequence from double-blinking.
     this.terminal.write('\x1b[2 q')
     process.stdout.on('resize', this.onTerminalResize)
     this.cursorBlinkTimer = setInterval(() => {
@@ -759,9 +788,10 @@ export class TerminalView implements AppView {
 
   private editorEnabled = false
 
-  /** Software cursor blink: pi renders the editor's fake reverse-video cell
-   *  always, and the hardware cursor (when shown) covers it; toggling the
-   *  hardware cursor's visibility flashes between the two states on every
+  /** Software cursor blink: a half-second timer flips the hardware cursor
+   *  between shown and hidden. CursorFlashTerminal strips the editor's fake
+   *  inverse-video cell, so the off phase is a plain cell and the block
+   *  really disappears — a visible appear/disappear flash on every
    *  terminal, DECSCUSR support or not. */
   private cursorBlinkTimer: ReturnType<typeof setInterval> | undefined
   private cursorVisible = true

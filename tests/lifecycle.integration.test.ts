@@ -562,6 +562,12 @@ test('Ctrl+U pops the last queued message into the composer end to end', async (
     }, 'panel shrink and composer restore')
     // With the editor focused, pi's frame ends show the hardware cursor.
     assert.ok(stdoutRef.value.includes('\x1b[?25h'), 'hardware cursor is shown while focused')
+    // The editor's fake inverse-video cursor cell is stripped from the
+    // output: the cursor cell renders as a plain space, so the blinking
+    // hardware cursor is the only block — the appear/disappear flash is
+    // visible on every terminal, not just ones whose cursor looks different
+    // from pi's inverse cell.
+    assert.ok(!stdoutRef.value.includes('\x1b[7m'), 'fake cursor cell stripped from output')
     // The thinking chain from history renders as its own block.
     await waitForStdout(stdoutRef, '▍ Thinking')
     await waitForStdout(stdoutRef, 'think about it')
