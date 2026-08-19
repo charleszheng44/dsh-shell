@@ -156,10 +156,12 @@ export function contextStyle(percent: number, text: string): string {
 
 /** Footer stats parts, each in its own readable color: input tokens in
  *  interaction blue, output in the brighter shimmer, cache and the provider
- *  neutral, the model label bold and bright. */
+ *  neutral (mist-inactive — a step up from mist-subtle, whose contrast on
+ *  dark backgrounds is too low for numbers), the model label bold and
+ *  bright. */
 export const statsInputStyle = (text: string): string => mistBlue(text)
 export const statsOutputStyle = (text: string): string => mistShimmer(text)
-export const statsCacheStyle = (text: string): string => mistSubtle(text)
+export const statsCacheStyle = (text: string): string => mistInactive(text)
 export const statsModelStyle = (text: string): string => bold(mistShimmer(text))
 
 /** Picker panel background: the 256-color index 236 (the bubble-family

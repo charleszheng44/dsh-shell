@@ -374,6 +374,12 @@ test('statsText colors each part: input blue, output shimmer, cache subtle, mode
   assert.ok(text.includes(statsCacheStyle('R37M')), 'cache read in subtle')
   assert.ok(text.includes(statsModelStyle('DeepSeek · DeepSeek-V4-Flash (Max)')), 'model label bold and bright')
   assert.ok(text.includes(contextStyle(34.6771, '34.7%/1.0M')), 'context usage keeps its status color')
+  // The three token parts must stay visually distinct from each other.
+  assert.notEqual(statsInputStyle('x'), statsOutputStyle('x'), 'input and output colors differ')
+  assert.notEqual(statsOutputStyle('x'), statsCacheStyle('x'), 'output and cache colors differ')
+  assert.notEqual(statsInputStyle('x'), statsCacheStyle('x'), 'input and cache colors differ')
+  // The separators stay dim so the parts read as one byline.
+  assert.ok(text.includes('\x1b[2m · \x1b[22m'), 'separators are dim')
 })
 
 test('statsText renders a pi-style usage line only while attached', () => {
