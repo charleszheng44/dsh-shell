@@ -588,7 +588,7 @@ test('footerHints switches to answering mode while a question is open', () => {
   // While an approval is pending the Ctrl+A/Ctrl+R keys are advertised.
   const approving = footerHints({ phase: 'attached', pendingQuestions: [], pendingApprovals: [{ rpcId: 'r', approvalId: 'a1', toolName: 'bash' }] } as never)
   assert.ok(approving.includes('Ctrl+A allow once'), approving)
-  assert.ok(approving.includes('Ctrl+M model'), approving)
+  assert.ok(approving.includes('Ctrl+O model'), approving)
   assert.ok(!approving.includes('Answer:'), approving)
 })
 
@@ -663,14 +663,13 @@ test('reconcileRows removes dropped components when the transcript shrinks', () 
   assert.equal(container.children.length, 0)
 })
 
-test('tool rows render the call header plain and the result boxed', () => {
+test('tool rows render the call header plain and the result corner-prefixed', () => {
   // Codex-style: the toolCall header ("• RunCode (...)") is plain text on
-  // the default background — only the result gets the grey canvas. The
+  // the default background, and the result output leads with a dim corner
+  // (└) with continuation lines indented under it — no canvas. The
   // toolCall title+args must compose inside one Text (pi's stack
   // compositing inserts full resets between children, which would break
-  // styling mid-row); every rendered line of the result boxes must carry
-  // the background with no full reset in between (regression: the
-  // with-args tool box lost its background after the title).
+  // styling mid-row).
   const container = new Container()
   const cache: Array<{ row: TranscriptRow; component: unknown }> = []
   const rows = [
@@ -693,28 +692,17 @@ test('tool rows render the call header plain and the result boxed', () => {
   assert.ok(callLines.includes('('), 'args are parenthesized')
   assert.ok(!callLines.includes('\x1b[48;'), 'the call header has no background')
   assert.equal(callLines.split('\n').length, 1, 'the call header is one plain line')
-  // Failed results lead with the rose cross.
+  // The output block: first line leads with the corner, continuation lines
+  // indent, and there is no canvas background on any line.
+  const outLines = rows2[1]?.render(60).join('\n') ?? ''
+  const plainOut = outLines.replace(/\x1b\[[0-9;]*m/g, '')
+  assert.ok(plainOut.includes('  └ out'), plainOut)
+  assert.ok(plainOut.includes('    line two'), plainOut)
+  assert.ok(!outLines.includes('\x1b[48;'), 'no canvas background on the output')
+  // Failed results keep the rose cross on the first line.
   const errLines = rows2[2]?.render(60).join('\n') ?? ''
-  assert.ok(errLines.includes('✗'), 'failed results lead with the rose cross')
-  // The error result uses the error tint, whatever the terminal's color
-  // mode: its background SGR must differ from the success box's.
-  const successLines = rows2[1]?.render(30) ?? []
-  const errorLines = rows2[2]?.render(30) ?? []
-  const firstSgr = (line: string | undefined): string => line === undefined ? '' : line.slice(0, line.indexOf('m') + 1)
-  assert.notEqual(firstSgr(errorLines[1]), firstSgr(successLines[1]), 'error box uses a different background')
-  assert.ok(firstSgr(errorLines[1]).startsWith('\x1b[48;'), 'error box has a background')
-  for (const child of rows2.slice(1)) {
-    const lines = child.render(40)
-    assert.ok(lines.length >= 2, 'boxed rows have padding lines')
-    for (const line of lines) {
-      assert.ok(line.startsWith('\x1b[48;'), `box line starts with a background: ${JSON.stringify(line)}`)
-      // The only full reset allowed is at the very end (pi's line terminator);
-      // everything before it must keep the background alive.
-      const body = line.replace(/\x1b\[0m$/, '')
-      assert.ok(!body.includes('\x1b[0m'), `no mid-line full reset: ${JSON.stringify(line)}`)
-      assert.ok(line.endsWith('\x1b[49m') || line.endsWith('\x1b[0m'), `line ends cleanly: ${JSON.stringify(line)}`)
-    }
-  }
+  assert.ok(errLines.includes('✗'), 'failed results keep the rose cross')
+  assert.ok(!errLines.includes('\x1b[48;'), 'no canvas background on failed output')
 })
 
 test('control characters inside URLs cannot defeat link neutralization', () => {

@@ -7,7 +7,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { to256, composerBorderStyle, questionBoxBg, toolDisplayName, toolDotStyle, toolErrorBoxBg, toolOutputStyle, toolResultBoxBg, toolResultStyle, toolTitleStyle, userBubbleBg, userMarker, userStyle } from '../src/theme.js'
+import { to256, composerBorderStyle, questionBoxBg, toolDisplayName, toolDotStyle, toolOutputStyle, toolResultStyle, toolTitleStyle, userBubbleBg, userMarker, userStyle } from '../src/theme.js'
 
 test('theme resets are attribute-specific so box backgrounds survive', () => {
   // pi's Box wraps each padded row in the background style; a full \x1b[0m
@@ -67,8 +67,6 @@ test('the 256-color fallbacks are distinct and brightness-ordered', () => {
     else assert.ok(out.startsWith('\x1b[48;2;'), out)
   }
   fallback(userBubbleBg, 236)
-  fallback(toolResultBoxBg, 237)
-  fallback(toolErrorBoxBg, 238)
   fallback(questionBoxBg, 239)
 })
 
@@ -104,7 +102,7 @@ test('to256 gray ramp picks the nearest step and never exceeds 255', () => {
   assert.equal(to256([0xff, 0xff, 0xff]), 231)
   assert.equal(to256([0, 0, 0]), 16)
   // Every palette gray stays within the valid SGR range.
-  for (const hex of [0x292d36, 0x3a3a3a, 0x362b2c, 0x30353d, 0x5e6673, 0x8d95a6, 0xb0b0b0, 0xe8e6e0]) {
+  for (const hex of [0x292d36, 0x30353d, 0x5e6673, 0x8d95a6, 0xb0b0b0, 0xe8e6e0]) {
     const index = to256([(hex >> 16) & 0xff, (hex >> 8) & 0xff, hex & 0xff])
     assert.ok(index >= 16 && index <= 255, `index ${index} out of range for #${hex.toString(16)}`)
   }

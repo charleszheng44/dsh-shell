@@ -536,10 +536,10 @@ test('Ctrl+U pops the last queued message into the composer end to end', async (
     }, 'panel shrink and composer restore')
     // With the editor focused, pi's frame ends show the hardware cursor.
     assert.ok(stdoutRef.value.includes('\x1b[?25h'), 'hardware cursor is shown while focused')
-    // Ctrl+M (the disambiguated kitty CSI-u form — plain Enter must not
-    // open the picker) lists the models; Enter selects the first model and
-    // applies it without a reasoning effort.
-    child.stdin?.write('\x1b[109;5u')
+    // Ctrl+O (the universal binding — no terminal ambiguity) lists the
+    // models; Enter selects the first model and applies it without a
+    // reasoning effort.
+    child.stdin?.write('\u000f')
     await waitForStdout(stdoutRef, 'Select model')
     child.stdin?.write('\r')
     await waitFor(() => selectModelCalls.length === 1, 'selectModel call')
@@ -555,6 +555,21 @@ test('Ctrl+U pops the last queued message into the composer end to end', async (
       sessionId: 's1',
       mode: 'queue',
       content: [{ type: 'text', text: 'hello' }],
+    })
+    // ESC cancels an open picker: after ESC the composer regains input, so
+    // typing and Enter submit (if the dialog were still open the keys would
+    // go to the SelectList instead).
+    child.stdin?.write('\u000f') // Ctrl+O -> model picker
+    await waitForStdout(stdoutRef, 'Select model')
+    child.stdin?.write('\x1b') // ESC
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    child.stdin?.write('second')
+    child.stdin?.write('\r')
+    await waitFor(() => promptCalls.length === 2, 'prompt call after ESC')
+    assert.deepEqual(promptCalls[1], {
+      sessionId: 's1',
+      mode: 'queue',
+      content: [{ type: 'text', text: 'second' }],
     })
     // The host's approval ask renders as a card; Ctrl+A answers it by
     // echoing the frame's rpcId with the allowed-once outcome.

@@ -164,16 +164,6 @@ export const pickerTitleStyle = (text: string): string => bold(mistShimmer(text)
  *  #292D36); its natural 256-color index (236) mirrors the truecolor hex. */
 export const userBubbleBg = bgHex('#292d36')
 
-/** Tool result background: a neutral grey canvas for command output,
- *  Codex-style (the reference's green-tinted success surface is dropped).
- *  The 256-color fallback (237) keeps it distinct from the bubble (236). */
-export const toolResultBoxBg = bgHex('#3a3a3a', 237)
-
-/** Failed tool result background: the reference's dim rose diff surface
- *  #362B2C. The 256-color fallback (238) keeps it distinct from the bubble
- *  (236) and the success canvas (237). */
-export const toolErrorBoxBg = bgHex('#362b2c', 238)
-
 /** Question card background (the reference's memoryBackgroundColor #30353D):
  *  a host question renders as its own boxed card at the transcript tail. */
 export const questionBoxBg = bgHex('#30353d', 239)

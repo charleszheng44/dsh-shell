@@ -43,9 +43,7 @@ import {
   questionBoxBg,
   toolDisplayName,
   toolDotStyle,
-  toolErrorBoxBg,
   toolOutputStyle,
-  toolResultBoxBg,
   toolResultStyle,
   toolTitleStyle,
   userBubbleBg,
@@ -413,10 +411,16 @@ function rowComponent(row: TranscriptRow): Component {
     return new Text(`${dot}${title}${args}`, 0, 0)
   }
   if (row.kind === 'toolResult') {
-    const box = new Box(1, 1, row.error ? toolErrorBoxBg : toolResultBoxBg)
+    // Codex-style output block: the first line leads with a dim corner and
+    // continuation lines indent under it — plain text, no canvas, matching
+    // how pi shows command run output. Failures keep the rose cross.
     const mark = row.error ? toolDotStyle(row.name, true)('✗ ') : ''
-    box.addChild(new Text(`${mark}${toolResultStyle(terminalSafeText(toolPreviewText(row.output, row.truncated)))}`, 0, 0))
-    return box
+    const body = terminalSafeText(toolPreviewText(row.output, row.truncated)).split('\n')
+    const lines = body.map((line, index) => {
+      const prefix = index === 0 ? `  └ ${mark}` : '    '
+      return `${footerStyle(prefix)}${toolResultStyle(line)}`
+    })
+    return new Text(lines.join('\n'), 0, 0)
   }
   return new HStack([
     { component: new Text(assistantMarker(), 0, 0), basis: 3, grow: 0 },
@@ -605,12 +609,14 @@ export class TerminalView implements AppView {
         this.onSession()
         return { consume: true }
       }
-      if (matchesKey(data, 'ctrl+m') && data !== '\r') {
+      if ((matchesKey(data, 'ctrl+o') || (matchesKey(data, 'ctrl+m') && data !== '\r'))) {
         // Model/effort picker: only meaningful while attached on a live
         // stream with no overlay open; otherwise the key falls through.
-        // In legacy terminals Ctrl+M is the SAME byte as Enter (CR 0x0D),
-        // so plain Enter must never open the picker — only the
-        // disambiguated kitty CSI-u form (\x1b[109;5u) can mean Ctrl+M.
+        // Ctrl+O is the universal binding (no terminal ambiguity). Ctrl+M
+        // additionally works on kitty-protocol terminals — in legacy
+        // terminals Ctrl+M is the SAME byte as Enter (CR 0x0D), so plain
+        // Enter must never open the picker, and only the disambiguated
+        // kitty CSI-u form (\x1b[109;5u) can mean Ctrl+M.
         const state = this.latestState
         if (state !== undefined
           && state.connection === 'connected'
@@ -749,7 +755,11 @@ export class TerminalView implements AppView {
     // stream: after a disconnect the header explains the state.
     const connected = state.connection === 'connected'
     this.queue.setText(connected ? queuedText(state.attachment) : '')
-    this.hints.setText(connected ? footerHints(state.attachment) : footerStyle('Ctrl+P project  Ctrl+S session  Ctrl+C quit\nApprovals and questions: use Web UI'))
+    this.hints.setText(this.overlay !== undefined
+      ? footerStyle('↑↓ move · Enter select · ESC cancel')
+      : connected
+        ? footerHints(state.attachment)
+        : footerStyle('Ctrl+P project  Ctrl+S session  Ctrl+C quit\nApprovals and questions: use Web UI'))
     this.renderTranscript(state.attachment, connected)
     const policy = editorPolicy(state, this.overlay !== undefined)
     this.editorEnabled = policy.enabled
@@ -1086,7 +1096,7 @@ export function canEditQueued(state: AppState, overlayOpen: boolean, busy: boole
 export function footerHints(attachment: AppState['attachment']): string {
   const question = attachment.phase === 'attached' && attachment.pendingQuestions.length > 0
   const approval = attachment.phase === 'attached' && attachment.pendingApprovals.length > 0
-  const keys = 'Ctrl+P project  Ctrl+S session  Ctrl+M model  Ctrl+C quit'
+  const keys = 'Ctrl+P project  Ctrl+S session  Ctrl+O model  Ctrl+C quit'
   const mode = approval
     ? 'Ctrl+A allow once · Ctrl+R reject · Enter send · ↑ history'
     : question
