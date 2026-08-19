@@ -277,6 +277,97 @@ export class PickerFrame implements Component {
   }
 }
 
+/**
+ * Transcript rendering as a flat cached-lines component. pi's layout walks
+ * every child of a Container on every frame (measured ~100 ms at 1000 rows),
+ * so every keystroke and animation tick paid the full tree cost. This
+ * component holds the row components but composes their lines from its own
+ * persistent per-row cache, and carries no layout node, so pi renders it
+ * with a single render call: the per-frame cost is a flat join of cached
+ * lines regardless of the transcript size. Transients (partial, question
+ * card, working line, hint) are re-rendered fresh each frame — they change
+ * every render by nature and are at most a few rows.
+ */
+export class TranscriptList implements Component {
+  private rowComponents: readonly Component[] = []
+  private transients: readonly Component[] = []
+  private lines: Array<string[] | undefined> = []
+  private lineWidth = -1
+  private dirty = new Set<number>()
+
+  /** Replace the row set; unchanged rows keep their cached lines. */
+  setRows(rows: readonly Component[]): void {
+    const old = this.rowComponents
+    if (rows.length === old.length && rows.every((component, index) => component === old[index])) return
+    for (let index = 0; index < Math.max(rows.length, old.length); index += 1) {
+      if (rows[index] !== old[index]) this.dirty.add(index)
+    }
+    this.rowComponents = rows
+  }
+
+  setTransients(transients: readonly Component[]): void {
+    if (transients.length === this.transients.length
+      && transients.every((component, index) => component === this.transients[index])) return
+    // A transient layout change shifts everything: recompute the whole list.
+    this.transients = transients
+    this.lines = []
+    this.dirty.clear()
+    for (let index = 0; index < this.rowComponents.length; index += 1) this.dirty.add(index)
+  }
+
+  invalidate(): void {
+    // The TUI calls invalidate on the root every frame; the cache is managed
+    // through setRows/setTransients, so there is nothing to do here.
+  }
+
+  handleInput(data: string): void {
+    // The transcript never owns keyboard input.
+  }
+
+  render(width: number): string[] {
+    if (width !== this.lineWidth) {
+      this.lineWidth = width
+      this.lines = []
+      this.dirty.clear()
+      for (let index = 0; index < this.rowComponents.length; index += 1) this.dirty.add(index)
+    }
+    const out: string[] = []
+    for (let index = 0; index < this.rowComponents.length; index += 1) {
+      const component = this.rowComponents[index]
+      if (component === undefined) continue
+      let lines = this.lines[index]
+      if (lines === undefined || this.dirty.has(index)) {
+        lines = component.render(width)
+        this.lines[index] = lines
+      }
+      out.push(...lines)
+    }
+    for (const component of this.transients) out.push(...component.render(width))
+    this.dirty.clear()
+    return out
+  }
+}
+
+/** Reconcile the transcript's row component cache against a row list and
+ *  return the component array (TranscriptList consumes it; unchanged rows
+ *  are reused so their cached lines stay valid). */
+export function reconcileRowComponents(
+  cache: Array<{ row: TranscriptRow; component: Component }>,
+  rows: readonly TranscriptRow[],
+): readonly Component[] {
+  while (cache.length > rows.length) cache.pop()
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index] as TranscriptRow
+    const entry = cache[index]
+    if (entry === undefined) {
+      cache.push({ row, component: rowComponent(row) })
+    } else if (entry.row !== row) {
+      cache[index] = { row, component: rowComponent(row) }
+    }
+  }
+  return cache.map((entry) => entry.component)
+}
+
 /** Number of tool-output lines previewed before the "+N more lines" note,
  *  matching pi's fallback preview. */
 const TOOL_OUTPUT_PREVIEW_LINES = 10
@@ -349,7 +440,7 @@ export function toolPreviewText(output: string, truncated: boolean): string {
 export class TerminalView implements AppView {
   private readonly terminal = new ProcessTerminal()
   private readonly tui = new TuiAltScreen(this.terminal)
-  private readonly transcript = new Container()
+  private readonly transcript = new TranscriptList()
   private readonly partial = new Markdown('', 1, 0, markdownTheme)
   private readonly partialRow = new HStack([
     { component: new Text(assistantMarker(), 0, 0), basis: 3, grow: 0 },
@@ -500,21 +591,20 @@ export class TerminalView implements AppView {
 
   private renderTranscript(attachment: AppState['attachment'], connected: boolean): void {
     const rows = attachment.phase === 'attached' ? attachment.transcript : []
-    reconcileRows(this.transcript, this.rowCache, rows)
+    this.transcript.setRows(reconcileRowComponents(this.rowCache, rows))
+    const transients: Component[] = []
     // First-run hint while nothing is attached; removed as soon as any
     // attachment phase begins.
-    this.transcript.removeChild(this.hint)
     if (attachment.phase === 'none') {
       this.hint.setText(footerStyle('Press Ctrl+P or Ctrl+S to pick a project and session'))
-      this.transcript.addChild(this.hint)
+      transients.push(this.hint)
     }
     // The live partial updates in place (single Markdown component) and stays
     // after every finalized row; the assistant marker column is added only
     // while there is in-flight content to show.
-    this.transcript.removeChild(this.partialRow)
     if (attachment.phase === 'attached' && attachment.partial !== undefined) {
       this.partial.setText(terminalSafeText(assistantMarkdown(partialSegments(attachment.partial))))
-      this.transcript.addChild(this.partialRow)
+      transients.push(this.partialRow)
     } else {
       this.partial.setText('')
     }
@@ -523,19 +613,18 @@ export class TerminalView implements AppView {
     // first pending question is shown and answerable at a time; the host
     // settles sequentially, so a second ask waits for the first. The card
     // disappears on disconnect, like the queue line and answering hints.
-    this.transcript.removeChild(this.questionBox)
     if (connected && attachment.phase === 'attached' && attachment.pendingQuestions.length > 0) {
       const pending = attachment.pendingQuestions[0]
       if (pending !== undefined) {
         this.questionText.setText(questionCardText(pending.questions))
-        this.transcript.addChild(this.questionBox)
+        transients.push(this.questionBox)
       }
     }
     // The Deep diving status is the very last row of the transcript, below
     // the streaming partial — the Web UI renders its turn status at the tail
     // of the conversation, after the last content node.
-    this.transcript.removeChild(this.working)
-    if (this.workingActive) this.transcript.addChild(this.working)
+    if (this.workingActive) transients.push(this.working)
+    this.transcript.setTransients(transients)
   }
 
   openProjectPicker(rows: readonly ProjectRow[], onSelect: (row: ProjectRow) => void, onCancel: () => void): void {

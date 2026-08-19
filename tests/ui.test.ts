@@ -6,9 +6,9 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { Container, Markdown, getCapabilities, setCapabilities, visibleWidth as visibleWidthOf } from '@earendil-works/pi-tui'
+import { Container, Markdown, getCapabilities, setCapabilities, visibleWidth as visibleWidthOf, type Component } from '@earendil-works/pi-tui'
 
-import { PickerFrame, assistantMarkdown, deepDivingText, editorPolicy, editorTextAfterSubmit, footerHints, formatTokens, headerText, isWorking, neutralizeLinks, pickerLabel, questionCardText, queuedText, reconcileRows, sessionPickerItems, statsText, terminalSafeText, toolPreviewText } from '../src/ui.js'
+import { PickerFrame, TranscriptList, assistantMarkdown, deepDivingText, editorPolicy, editorTextAfterSubmit, footerHints, formatTokens, headerText, isWorking, neutralizeLinks, pickerLabel, questionCardText, queuedText, reconcileRows, sessionPickerItems, statsText, terminalSafeText, toolPreviewText } from '../src/ui.js'
 import type { TranscriptRow } from '../src/transcript.js'
 import { contextStyle } from '../src/theme.js'
 
@@ -504,6 +504,39 @@ test('sessionPickerItems sanitizes titles with a fallback label', () => {
   const items = sessionPickerItems([{ sessionId: 's1' as never, title: '\x1b[31m\x1b[0m' }])
   assert.equal(items[0]?.value, 's1')
   assert.equal(items[0]?.label, 'Session')
+})
+
+test('TranscriptList caches row lines and refreshes transients', () => {
+  let rowRenders = 0
+  const counter = (): Component => ({
+    render: () => { rowRenders += 1; return ['row'] },
+    invalidate: () => {},
+  })
+  const list = new TranscriptList()
+  const a = counter()
+  const b = counter()
+  list.setRows([a, b])
+  assert.deepEqual(list.render(40), ['row', 'row'])
+  assert.equal(rowRenders, 2)
+  // Unchanged rows reuse their cached lines.
+  assert.deepEqual(list.render(40), ['row', 'row'])
+  assert.equal(rowRenders, 2)
+  // A changed row set recomputes only the affected index.
+  const c = counter()
+  list.setRows([a, c])
+  assert.deepEqual(list.render(40), ['row', 'row'])
+  assert.equal(rowRenders, 3)
+  // Transients render fresh every frame; a transient layout change
+  // recomputes all rows (the tail shifted).
+  list.setTransients([{ render: () => ['live'], invalidate: () => {} }])
+  assert.deepEqual(list.render(40), ['row', 'row', 'live'])
+  assert.equal(rowRenders, 5)
+  list.setTransients([])
+  assert.deepEqual(list.render(40), ['row', 'row'])
+  assert.equal(rowRenders, 7)
+  // A width change recomputes everything.
+  assert.equal(list.render(80).length, 2)
+  assert.equal(rowRenders, 9)
 })
 
 test('reconcileRows removes dropped components when the transcript shrinks', () => {

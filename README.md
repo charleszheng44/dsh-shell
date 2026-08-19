@@ -1,5 +1,18 @@
 # dsh-shell
 
+A thin remote terminal shell client for DeepSeek Harness: attach to an
+already-running DSH host over its HTTP and WebSocket API, select a session,
+prompt it, answer its questions, and watch the queue, tool activity, and
+streaming replies.
+
+The visual language follows the Gentle Mist Blue (雾蓝) palette of the
+dsh-TUI reference client: warm off-white text, mist blues for brand and
+interaction, category-colored tool dots, pointer-in-bubble user prompts,
+and a pi-style usage footer. Four deliberate divergences from the
+reference remain: the assistant row marker, the Deep diving status line
+(the Web UI's shimmer stand-in), full-width boxed tool cards, and the
+user bubble's padding — each is documented in the code.
+
 An independent terminal client for DeepSeek Harness.
 
 ## Status
