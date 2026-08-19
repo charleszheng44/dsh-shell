@@ -314,7 +314,11 @@ function startQueueHost(): Promise<{
           value = { items: [{ workspaceId: 'w1', path: '/tmp', title: 'stub', sessionIds: [SID], createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' }], archivedSessionIds: [] }
           break
         case 'session.list':
-          value = { items: [{ sessionId: SID, updatedAt: 0, running: false, blank: false, projections: { asOfSeq: 1, values: { title: 'stub session' } } }] }
+          value = { items: [{ sessionId: SID, updatedAt: 0, running: false, blank: false, projections: { asOfSeq: 1, values: {
+            title: 'stub session',
+            tokenUsage: { uncachedInputTokens: 1200, outputTokens: 3400, cacheReadTokens: 0, cacheWriteTokens: 0 },
+            contextPressure: { pressureTokens: 90000, contextWindow: 200000 },
+          } } }] }
           break
         case 'session.history':
           value = { events: [], hasMore: false }
@@ -537,14 +541,20 @@ test('Ctrl+U pops the last queued message into the composer end to end', async (
     }, 'panel shrink and composer restore')
     // With the editor focused, pi's frame ends show the hardware cursor.
     assert.ok(stdoutRef.value.includes('\x1b[?25h'), 'hardware cursor is shown while focused')
+    // The footer already shows the current model next to the context
+    // usage, from the models catalog fetched at attach.
+    await waitForStdout(stdoutRef, 'Provider One · Model One')
     // Ctrl+O (the universal binding — no terminal ambiguity) lists the
-    // models; Enter selects the first model and applies it without a
-    // reasoning effort.
+    // models; choosing the second model (which exposes reasoning efforts)
+    // chains into the effort picker, where Low is applied.
     child.stdin?.write('\u000f')
     await waitForStdout(stdoutRef, 'Select model')
-    child.stdin?.write('\r')
+    child.stdin?.write('\x1b[B\r')
+    child.stdin?.write('\x1b[B\r')
     await waitFor(() => selectModelCalls.length === 1, 'selectModel call')
-    assert.deepEqual(selectModelCalls[0], { sessionId: 's1', provider: 'p1', model: 'm1' })
+    assert.deepEqual(selectModelCalls[0], { sessionId: 's1', provider: 'p1', model: 'm2', reasoningEffort: 'low' })
+    // The label updates to the new model and effort level.
+    await waitForStdout(stdoutRef, 'Provider One · Model Two (Low)')
     // Plain Enter still submits from the composer (regression: Ctrl+M and
     // Enter share the CR byte in legacy terminals). Clear the popped text
     // first, then type and submit.

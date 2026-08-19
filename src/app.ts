@@ -17,7 +17,7 @@ import type { SessionSummary, WorkspaceId, WorkspaceView } from '@deepseek-ai/ds
 // SessionSummary.projections.values.title is typed; type-only, no runtime cost.
 import type {} from '@deepseek-ai/dsh-session-title/types'
 
-import type { ModelReasoning, MuxFrame, QueuedInboxItem, RpcId } from '@deepseek-ai/dsh-host-apiproxy/api'
+import type { ModelReasoning, MuxFrame, QueuedInboxItem, RpcId, SessionModels } from '@deepseek-ai/dsh-host-apiproxy/api'
 
 import type { DshPort, HostDescription } from './dsh.js'
 import { applyEvent, projectEvents, type PartialAssistant, type TranscriptRow } from './transcript.js'
@@ -125,6 +125,9 @@ export type AttachmentState =
       /** Open approval requests from the host (approval/requested frames not
        *  yet settled by approval/resolved). */
       pendingApprovals: readonly PendingApproval[]
+      /** The session's current model selection label (Provider · Model
+       *  (effort)), refreshed at attach and after every selectModel. */
+      modelLabel: string | undefined
     }
 
 /** Complete UI state, rendered by the view on every change. */
@@ -261,6 +264,22 @@ export function parseQuestionAnswers(questions: readonly QuestionItem[], input: 
 
 /** Footer stats from the session list snapshot; undefined when the host
  *  projection lacks token or context numbers. */
+/** The display label for a model selection: "Provider · Model (effort)"
+ *  from the catalog, falling back to the raw ids when the current selection
+ *  is not in the advertised groups (catalog membership is advisory). */
+export function modelLabelFor(models: SessionModels): string {
+  const current = models.current
+  const group = models.groups.find((candidate) => candidate.id === current.provider)
+  const model = group?.models.find((candidate) => candidate.id === current.model)
+  const name = group === undefined || model === undefined
+    ? `${current.provider}/${current.model}`
+    : `${group.name} · ${model.name}`
+  const effortId = current.reasoningEffort
+  if (effortId === undefined) return name
+  const effort = model?.reasoning?.efforts.find((candidate) => candidate.id === effortId)
+  return `${name} (${effort?.name ?? effortId})`
+}
+
 export function summaryStats(session: SessionSummary | undefined): SessionStats | undefined {
   if (session === undefined) return undefined
   const values = session.projections?.values
@@ -650,6 +669,28 @@ export class App {
   /** Transient inbox state cached per session from mux replays and updates:
    *  queue and question frames can arrive before the user attaches (the host
    *  replays them on stream open), and the attachment seeds from this cache. */
+  /** The last sessions.models catalog: resolves display names for the
+   *  current-selection label and for labels after selectModel. */
+  private modelCatalog: SessionModels | undefined
+
+  /** Refresh the footer's model label after an attach (the host pushes
+   *  model changes only through the projection, so the label is fetched).
+   *  Failures are silent: the label simply stays absent. */
+  private async refreshModel(sessionId: SessionId, generation: number): Promise<void> {
+    const result = await this.port.listModels(sessionId, this.signal)
+    const current = this.state.attachment
+    if (this.closed
+      || this.state.connection !== 'connected'
+      || current.phase !== 'attached'
+      || current.sessionId !== sessionId
+      || current.generation !== generation) {
+      return
+    }
+    if (!result.ok) return
+    this.modelCatalog = result.value
+    this.setState({ attachment: { ...current, modelLabel: modelLabelFor(result.value) } })
+  }
+
   private inbox = new Map<string, {
     queue: readonly QueuedInboxItem[]
     questions: readonly PendingQuestion[]
@@ -797,9 +838,13 @@ export class App {
         queue: this.inbox.get(String(sessionId))?.queue ?? [],
         pendingQuestions: this.inbox.get(String(sessionId))?.questions ?? [],
         pendingApprovals: this.inbox.get(String(sessionId))?.approvals ?? [],
+        modelLabel: undefined,
       },
       notice: undefined,
     })
+    // The model label is fetched separately (sessions.models); failures are
+    // silent, so the label may stay absent.
+    void this.refreshModel(sessionId, generation)
   }
 
   /**
@@ -1002,6 +1047,7 @@ export class App {
       return
     }
     const models = result.value
+    this.modelCatalog = models
     const currentKey = `${models.current.provider}/${models.current.model}`
     const choices: ModelChoice[] = []
     for (const group of models.groups) {
@@ -1071,7 +1117,20 @@ export class App {
       return
     }
     const effort = selection.reasoningEffort === undefined ? '' : ` (${selection.reasoningEffort})`
-    this.setState({ notice: `Model: ${selection.model}${effort}` })
+    const label = this.modelCatalog === undefined
+      ? `${selection.provider}/${selection.model}${selection.reasoningEffort === undefined ? '' : ` (${selection.reasoningEffort})`}`
+      : modelLabelFor({
+        ...this.modelCatalog,
+        current: {
+          provider: selection.provider,
+          model: selection.model,
+          ...(selection.reasoningEffort === undefined ? {} : { reasoningEffort: selection.reasoningEffort }),
+        },
+      })
+    this.setState({
+      attachment: { ...current, modelLabel: label },
+      notice: `Model: ${selection.model}${effort}`,
+    })
   }
 
   /** Steer the last queued message into the running agent: the host removes

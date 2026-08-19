@@ -1058,8 +1058,11 @@ export function statsText(attachment: AppState['attachment']): string {
   const read = cacheReadTokens > 0 ? ` · R${formatTokens(cacheReadTokens)}` : ''
   const write = cacheWriteTokens > 0 ? ` · W${formatTokens(cacheWriteTokens)}` : ''
   const context = contextStyle(percent, `${percent.toFixed(1)}%/${formatTokens(contextWindow)}`)
-  // The reference's byline separates the stats parts with U+00B7.
-  return `${footerStyle(`↑${formatTokens(uncachedInputTokens)} · ↓${formatTokens(outputTokens)}${read}${write} `)}${context}`
+  // The reference's byline separates the stats parts with U+00B7; the
+  // current model (and effort level) sits right next to the context usage.
+  const model = attachment.modelLabel
+  const stats = `${footerStyle(`↑${formatTokens(uncachedInputTokens)} · ↓${formatTokens(outputTokens)}${read}${write} `)}${context}`
+  return model === undefined ? stats : `${stats}${footerStyle(` · ${model}`)}`
 }
 
 /** Codex-style queue preview panel: a bulleted section in the footer under

@@ -646,3 +646,44 @@ test('steerQueuedItem steers the last queued message', async () => {
   assert.equal(await app.steerQueuedItem(), false)
   assert.equal(view.renders.at(-1)?.notice, 'current turn no longer accepts steering')
 })
+
+test('attach and selectModel refresh the footer model label', async () => {
+  const port = new FakePort()
+  port.listModelsResult = {
+    ok: true,
+    value: {
+      current: { provider: 'p1', model: 'm1' },
+      routable: true,
+      groups: [{
+        id: 'p1',
+        name: 'Provider One',
+        models: [
+          { id: 'm1', name: 'Model One' },
+          { id: 'm2', name: 'Model Two', reasoning: { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }], defaultEffort: 'low' } },
+        ],
+      }],
+      failures: [],
+    },
+  }
+  const { app, view } = await booted(port)
+  await attach(app, port)
+  await flush()
+  const attached = view.renders.at(-1)?.attachment
+  assert.equal(attached?.phase === 'attached' ? attached.modelLabel : undefined, 'Provider One · Model One')
+  // Selecting another model updates the label with the effort name.
+  await app.openModelPicker()
+  const pick = view.modelPicks.at(-1)
+  pick?.onSelect(pick.choices[1] as never)
+  await flush()
+  const effortPick = view.modelPicks.at(-1)
+  effortPick?.onSelect(effortPick.choices[2] as never)
+  await flush()
+  const after = view.renders.at(-1)?.attachment
+  assert.equal(after?.phase === 'attached' ? after.modelLabel : undefined, 'Provider One · Model Two (High)')
+  // A failed refresh leaves the previous label.
+  port.listModelsResult = { ok: false, error: { code: 'internal', message: 'boom', details: {} } }
+  await app.openModelPicker()
+  assert.equal(view.renders.at(-1)?.notice, 'boom')
+  const still = view.renders.at(-1)?.attachment
+  assert.equal(still?.phase === 'attached' ? still.modelLabel : undefined, 'Provider One · Model Two (High)')
+})

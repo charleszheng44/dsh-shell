@@ -373,6 +373,10 @@ test('statsText renders a pi-style usage line only while attached', () => {
   assert.ok(text.includes('↓143k'), text)
   assert.ok(text.includes('· R37M'), text)
   assert.ok(text.includes('34.7%/1.0M'), text)
+  // The model label renders right next to the context usage.
+  const labeled = statsText({ phase: 'attached', modelLabel: 'Provider One · Model Two (High)', stats: { uncachedInputTokens: 226206, outputTokens: 142951, cacheReadTokens: 36564224, cacheWriteTokens: 0, pressureTokens: 346771, contextWindow: 1000000 } } as never)
+  assert.ok(labeled.includes('Provider One · Model Two (High)'), labeled)
+  assert.ok(labeled.indexOf('34.7%/1.0M') < labeled.indexOf('Provider One'), 'the label sits after the context usage')
   // No cache numbers -> the R/W segment is omitted.
   const noCache = {
     phase: 'attached',
