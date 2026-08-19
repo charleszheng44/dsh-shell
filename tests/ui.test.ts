@@ -953,10 +953,20 @@ test('stripFakeCursorCell removes pi\'s fake editor cursor, nothing else', () =>
   assert.equal(stripFakeCursorCell('he\x1b[7ml\x1b[0mlo'), 'hello')
   // Multi-code-unit graphemes survive whole.
   assert.equal(stripFakeCursorCell('\x1b[7m👨\u200d👩\u200d👧\u200d👦\x1b[0m'), '👨\u200d👩\u200d👧\u200d👦')
-  // Mouse selection and search highlights close with \x1b[27m, not \x1b[0m:
-  // they must pass through untouched, including a trailing row reset.
+  // Mouse selection and search highlights must pass through untouched,
+  // even when the selected span re-emits a full reset before its \x1b[27m
+  // closer (the span is multi-grapheme / carries styling, so it cannot be
+  // the editor's one-grapheme cursor).
   const selection = 'a\x1b[7mbc\x1b[27md\x1b[0m\x1b]8;;\x07'
   assert.equal(stripFakeCursorCell(selection), selection)
+  const resetInside = 'x\x1b[7mllo \x1b[0m\x1b[38;2;94;102;115mwor\x1b[27m y'
+  assert.equal(stripFakeCursorCell(resetInside), resetInside)
+  // A selection that embeds the composer cell keeps the whole span (the
+  // fake cell's opener sits inside the matched region, so it is never
+  // rescanned): the highlight stays correct, and the leftover inverse cell
+  // disappears with the selection on the next frame — transient, cosmetic.
+  const embedded = '\x1b[7mab \x1b[7m \x1b[0mcd\x1b[27m'
+  assert.equal(stripFakeCursorCell(embedded), embedded)
   // Plain buffers pass through byte for byte.
   const plain = '\x1b[38;2;94;102;115m❯ \x1b[0m\x1b]8;;\x07'
   assert.equal(stripFakeCursorCell(plain), plain)

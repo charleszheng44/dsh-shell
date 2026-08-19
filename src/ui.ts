@@ -477,16 +477,23 @@ export function toolPreviewText(output: string, truncated: boolean): string {
  * untouched, so the TUI still positions the hardware cursor (IME placement
  * included).
  */
-// pi's fake cursor is `\x1b[7m` + one grapheme + `\x1b[0m`, and every row
-// carries a trailing reset, so a plain `\x1b[7m…\x1b[0m` strip would also eat
-// mouse-selection and search highlights — those close with `\x1b[27m` instead
-// of `\x1b[0m`. The negative lookahead keeps every such span intact.
-const FAKE_CURSOR_CELL = /\x1b\[7m((?:(?!\x1b\[27m).)*?)\x1b\[0m/g
+// pi's fake cursor is `\x1b[7m` + exactly one grapheme + `\x1b[0m`. Mouse
+// selection and search highlights also open with `\x1b[7m` but re-emit the
+// cell's own style codes — including full resets — between the opener and
+// their `\x1b[27m` closer, so the strip can't be a blind `\x1b[7m…\x1b[0m`
+// deletion: the replace callback keeps any span that is not exactly one
+// unstyled grapheme. pi emits each frame as one write(), so the cell can
+// never split across buffers.
+const FAKE_CURSOR_CELL = /\x1b\[7m([\s\S]*?)\x1b\[0m/g
+const graphemes = new Intl.Segmenter()
 
 /** Strip pi's fake editor cursor cell from one TUI output buffer (used by
  *  CursorFlashTerminal; exported for tests). */
 export function stripFakeCursorCell(output: string): string {
-  return output.replace(FAKE_CURSOR_CELL, '$1')
+  return output.replace(FAKE_CURSOR_CELL, (match, inner: string) => {
+    if (inner.includes('\x1b')) return match
+    return [...graphemes.segment(inner)].length === 1 ? inner : match
+  })
 }
 
 class CursorFlashTerminal extends ProcessTerminal {
