@@ -69,9 +69,11 @@ test('append-origin user and assistant messages create finalized rows', () => {
     userMessage(1, { text: 'hi' }),
     assistantMessage(2, 0, 0, [{ type: 'text', text: 'yo' }]),
   ])
-  assert.equal(state.rows.length, 2)
+  assert.equal(state.rows.length, 4)
   assert.deepEqual(state.rows[0], { kind: 'user', text: 'hi' })
-  assert.deepEqual(state.rows[1], { kind: 'assistant', segments: [{ kind: 'text', text: 'yo' }] })
+  assert.deepEqual(state.rows[1], { kind: 'spacer' })
+  assert.deepEqual(state.rows[2], { kind: 'assistant', segments: [{ kind: 'text', text: 'yo' }] })
+  assert.deepEqual(state.rows[3], { kind: 'spacer' })
   assert.equal(state.lastSeq, 2)
   assert.equal(state.partial, undefined)
 })
@@ -91,12 +93,13 @@ test('user/message renders only when source.kind is user', () => {
   const injected = projectEvents([userMessage(1, { sourceKind: 'plugin', text: 'context' })])
   assert.equal(injected.rows.length, 0)
   const direct = projectEvents([userMessage(1, { sourceKind: 'user', text: 'real' })])
-  assert.equal(direct.rows.length, 1)
+  assert.equal(direct.rows.length, 2)
+  assert.deepEqual(direct.rows[1], { kind: 'spacer' })
 })
 
 test('unknown events advance the watermark without rendering', () => {
   const state = projectEvents([unknownEvent(1), unknownEvent(2, 'step/start'), userMessage(3)])
-  assert.equal(state.rows.length, 1)
+  assert.equal(state.rows.length, 2)
   assert.equal(state.lastSeq, 3)
 })
 
@@ -165,7 +168,9 @@ test('a long thinking chain is bounded with the truncated flag', () => {
   ])
   assert.deepEqual(finalized.rows, [
     { kind: 'reasoning', text: 'deep thought', truncated: false },
+    { kind: 'spacer' },
     { kind: 'assistant', segments: [{ kind: 'text', text: 'answer' }] },
+    { kind: 'spacer' },
   ])
 })
 
@@ -178,13 +183,14 @@ test('a finalized assistant message replaces the matching partial without duplic
       { type: 'tool-call', id: 'c1', name: 'bash', arguments: '{}' },
     ]),
   ])
-  assert.equal(state.rows.length, 2)
+  assert.equal(state.rows.length, 3)
   assert.equal(state.partial, undefined)
   assert.deepEqual(state.rows[0], {
     kind: 'assistant',
     segments: [{ kind: 'text', text: 'final answer' }],
   })
-  assert.deepEqual(state.rows[1], { kind: 'toolCall', name: 'bash' })
+  assert.deepEqual(state.rows[1], { kind: 'spacer' })
+  assert.deepEqual(state.rows[2], { kind: 'toolCall', name: 'bash' })
 })
 
 test('llm/retry clears the failed turn/step partial', () => {
@@ -224,7 +230,8 @@ test('in-flight history partial reconstruction keeps the unfinished prefix', () 
     chunk(2, 0, 0, { type: 'block-start', index: 0, blockType: 'text' }),
     chunk(3, 0, 0, { type: 'text-delta', index: 0, text: 'prefix of an unfinished response' }),
   ])
-  assert.equal(state.rows.length, 1)
+  assert.equal(state.rows.length, 2)
+  assert.deepEqual(state.rows[1], { kind: 'spacer' })
   assert.deepEqual(partialSegments(state.partial as never), [{ kind: 'text', text: 'prefix of an unfinished response' }])
 })
 
@@ -232,7 +239,7 @@ test('applyEvent is pure: the input state is never mutated', () => {
   const before = emptyTranscript()
   const after = applyEvent(before, userMessage(1, { text: 'hi' }))
   assert.equal(before.rows.length, 0)
-  assert.equal(after.rows.length, 1)
+  assert.equal(after.rows.length, 2)
   assert.notEqual(before, after)
 })
 
@@ -259,7 +266,7 @@ test('turn/end clears a partial that never finalized (error/aborted turn)', () =
     assistantMessage(6, 1, 0, [{ type: 'text', text: 'final answer' }]),
   ])
   assert.equal(state.partial, undefined)
-  assert.deepEqual(state.rows.map((row) => row.kind), ['user', 'user', 'assistant'])
+  assert.deepEqual(state.rows.map((row) => row.kind), ['user', 'spacer', 'user', 'spacer', 'assistant', 'spacer'])
 })
 
 test('turn/end for a different turn leaves the partial intact', () => {
@@ -423,6 +430,7 @@ test('a tool/result appends a named, bounded output row', () => {
   assert.deepEqual(state.rows, [
     { kind: 'toolCall', name: 'run_code', args: '{"code":"x"}' },
     { kind: 'toolResult', name: 'run_code', output: 'line one\nline two\nline three', truncated: false, error: false },
+    { kind: 'spacer' },
   ])
 })
 

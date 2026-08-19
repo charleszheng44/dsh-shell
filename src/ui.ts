@@ -391,6 +391,11 @@ const TOOL_OUTPUT_PREVIEW_LINES = 10
  *  are host- or model-controlled text, so they pass through
  *  terminalSafeText like every other DSH-derived string. */
 function rowComponent(row: TranscriptRow): Component {
+  if (row.kind === 'spacer') {
+    // One blank transcript row. pi's Text drops whitespace-only content, so
+    // the row carries a zero-width space (invisible, terminal-safe).
+    return new Text('\u200b', 0, 0)
+  }
   if (row.kind === 'user') {
     // The reference's user prompt: `❯ text` inside the bubble, pointer in
     // subtle gray, text in warm off-white — no separate marker column.

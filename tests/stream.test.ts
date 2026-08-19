@@ -295,7 +295,8 @@ test('events arriving during history load are buffered and folded contiguously',
   assert.equal(last?.attachment.phase, 'attached')
   if (last?.attachment.phase === 'attached') {
     assert.equal(last.attachment.lastSeq, 4)
-    assert.equal(last.attachment.transcript.length, 2)
+    // history user + buffered user, each with a trailing spacer.
+    assert.equal(last.attachment.transcript.length, 4)
     assert.equal(last.attachment.partial?.turn, 0)
   }
 })
@@ -311,7 +312,7 @@ test('frames for another session are ignored', async () => {
   assert.equal(last?.attachment.phase, 'attached')
   if (last?.attachment.phase === 'attached') {
     assert.equal(last.attachment.lastSeq, 1)
-    assert.equal(last.attachment.transcript.length, 1)
+    assert.equal(last.attachment.transcript.length, 2)
   }
 })
 
@@ -336,7 +337,7 @@ test('an other-session frame during history load is not buffered', async () => {
   assert.equal(last?.attachment.phase, 'attached')
   if (last?.attachment.phase === 'attached') {
     assert.equal(last.attachment.lastSeq, 1)
-    assert.equal(last.attachment.transcript.length, 1)
+    assert.equal(last.attachment.transcript.length, 2)
   }
 })
 
@@ -438,7 +439,7 @@ test('history prefix plus live suffix stitches one transcript', async () => {
   if (last?.attachment.phase === 'attached') {
     assert.equal(last.attachment.lastSeq, 5)
     assert.equal(last.attachment.partial, undefined)
-    const assistant = last.attachment.transcript.at(-1)
+    const assistant = last.attachment.transcript.at(-2)
     assert.deepEqual(assistant, {
       kind: 'assistant',
       segments: [{ kind: 'text', text: 'prefix suffix' }],
@@ -489,8 +490,10 @@ test('live tool/result folds into a named output row after a tool-call message',
     assert.equal(last.attachment.lastSeq, 3)
     assert.deepEqual(last.attachment.transcript, [
       { kind: 'user', text: 'q' },
+      { kind: 'spacer' },
       { kind: 'toolCall', name: 'run_code', args: '{"code":"x"}' },
       { kind: 'toolResult', name: 'run_code', output: 'out', truncated: false, error: false },
+      { kind: 'spacer' },
     ])
   }
 })
@@ -764,7 +767,7 @@ test('empty history page accepts a first live event at seq 0', async () => {
   assert.equal(last?.attachment.phase, 'attached')
   if (last?.attachment.phase === 'attached') {
     assert.equal(last.attachment.lastSeq, 0)
-    assert.equal(last.attachment.transcript.length, 1)
+    assert.equal(last.attachment.transcript.length, 2)
   }
 })
 

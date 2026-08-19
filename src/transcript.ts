@@ -29,6 +29,8 @@ export type TranscriptRow =
   | { kind: 'reasoning'; text: string; truncated: boolean }
   | { kind: 'toolCall'; name: string; args?: string }
   | { kind: 'toolResult'; name: string; output: string; truncated: boolean; error: boolean }
+  /** One blank row between transcript sections (thinking, text, tools). */
+  | { kind: 'spacer' }
 
 /** Per-block-index accumulator inside a partial. */
 export interface PartialBlock {
@@ -154,18 +156,21 @@ function truncateOutput(text: string): { text: string; truncated: boolean } {
 function rowsFromSegments(segments: readonly AssistantSegment[]): readonly TranscriptRow[] {
   const rows: TranscriptRow[] = []
   let textRun: AssistantSegment[] = []
+  const pushTextRun = (): void => {
+    if (textRun.length === 0) return
+    rows.push({ kind: 'assistant', segments: textRun }, { kind: 'spacer' })
+    textRun = []
+  }
   for (const segment of segments) {
     if (segment.kind === 'reasoning') {
-      if (textRun.length > 0) {
-        rows.push({ kind: 'assistant', segments: textRun })
-        textRun = []
-      }
-      rows.push({ kind: 'reasoning', text: segment.text, truncated: segment.truncated })
+      pushTextRun()
+      // A thinking block is its own section; the spacer after it separates
+      // it from what follows.
+      rows.push({ kind: 'reasoning', text: segment.text, truncated: segment.truncated }, { kind: 'spacer' })
     } else if (segment.kind === 'tool') {
-      if (textRun.length > 0) {
-        rows.push({ kind: 'assistant', segments: textRun })
-        textRun = []
-      }
+      pushTextRun()
+      // The call and its result stay attached (one unit); the result's own
+      // spacer separates the unit from the next section.
       rows.push(segment.args === undefined
         ? { kind: 'toolCall', name: segment.name }
         : { kind: 'toolCall', name: segment.name, args: segment.args })
@@ -173,7 +178,7 @@ function rowsFromSegments(segments: readonly AssistantSegment[]): readonly Trans
       textRun.push(segment)
     }
   }
-  if (textRun.length > 0) rows.push({ kind: 'assistant', segments: textRun })
+  pushTextRun()
   return rows
 }
 
@@ -190,7 +195,7 @@ export function applyEvent(state: TranscriptState, event: SessionEvent): Transcr
       .join('\n')
     // An image-only, empty, or whitespace-only user message renders nothing.
     if (text.trim() === '') return base
-    return { ...base, rows: [...state.rows, { kind: 'user', text }] }
+    return { ...base, rows: [...state.rows, { kind: 'user', text }, { kind: 'spacer' }] }
   }
 
   if (event.type === 'assistant/chunk') {
@@ -260,7 +265,7 @@ export function applyEvent(state: TranscriptState, event: SessionEvent): Transcr
     const bounded = truncateOutput(text)
     return {
       ...base,
-      rows: [...state.rows, { kind: 'toolResult', name, output: bounded.text, truncated: bounded.truncated, error }],
+      rows: [...state.rows, { kind: 'toolResult', name, output: bounded.text, truncated: bounded.truncated, error }, { kind: 'spacer' }],
     }
   }
 

@@ -391,7 +391,10 @@ test('the accepted notice clears when the prompt echo renders', async () => {
   assert.equal(view.renders.at(-1)?.notice, undefined)
   const last = view.renders.at(-1)
   if (last?.attachment.phase === 'attached') {
-    assert.equal(last.attachment.transcript.length, 2)
+    // history user + echo user, each with a trailing spacer.
+    assert.equal(last.attachment.transcript.length, 4)
+    assert.deepEqual(last.attachment.transcript[1], { kind: 'spacer' })
+    assert.deepEqual(last.attachment.transcript[3], { kind: 'spacer' })
   }
 })
 
