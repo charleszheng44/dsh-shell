@@ -134,10 +134,6 @@ export function userMarker(): string {
   return mistSubtle('❯ ')
 }
 
-/** Composer prompt: Codex's "> " prefix in the subtle gray, leading the
- *  input line. */
-export const promptStyle = (text: string): string => mistSubtle(text)
-
 /** Assistant response marker: a mist-blue block that prefixes model rows and
  *  the in-flight partial, chat-style. Rendered in its own component so it
  *  never interferes with Markdown parsing (e.g. a leading code fence). */

@@ -417,10 +417,11 @@ test('Ctrl+U pops the last queued message into the composer end to end', async (
     await waitForStdout(stdoutRef, 'Queued follow-up inputs')
     await waitForStdout(stdoutRef, '↳ run the tests')
     assert.equal(updateQueueCalls.length, 0)
-    // The Codex-style cursor: DECSCUSR 0 (blinking block) at start, and the
-    // hardware cursor is shown (pi hides it by default; TuiAltScreen was
-    // constructed with showHardwareCursor=true).
-    assert.ok(stdoutRef.value.includes('\x1b[0 q'), 'DECSCUSR blinking block emitted at start')
+    // The Codex-style cursor: DECSCUSR 2 (steady block — the software blink
+    // owns the flashing) at start, and the hardware cursor is shown (pi
+    // hides it by default; TuiAltScreen was constructed with
+    // showHardwareCursor=true).
+    assert.ok(stdoutRef.value.includes('\x1b[2 q'), 'DECSCUSR steady block emitted at start')
     child.stdin?.write('\u0015') // Ctrl+U
     // The host sees the remove for the LAST queued item.
     await waitFor(() => updateQueueCalls.length === 1, 'updateQueue call')
@@ -442,7 +443,7 @@ test('Ctrl+U pops the last queued message into the composer end to end', async (
       const editorRestored = rows.some((row) => {
         const last = lastWrite(row)
         // The composer row carries the Codex-style "> " prompt prefix.
-        return last.includes('> ') && last.includes('run the tests') && !last.includes('↳')
+        return last.includes('\u276f ') && last.includes('run the tests') && !last.includes('↳')
       })
       const panelFinal = rows.some((row) => {
         const last = lastWrite(row)
@@ -454,17 +455,36 @@ test('Ctrl+U pops the last queued message into the composer end to end', async (
         const last = lastWrite(row)
         return /^\x1b\[[0-9;]*m─{3,}/.test(last)
       })
+      // The queue panel sits ABOVE the input box: the panel row's index is
+      // smaller than the composer row's.
+      const panelIdx = rows.findIndex((row) => lastWrite(row).includes('fix the parser'))
+      const composerIdx = rows.findIndex((row) => {
+        const last = lastWrite(row)
+        return last.includes('\u276f ') && last.includes('run the tests')
+      })
       return editorRestored && panelFinal && borderAtLeft
+        && panelIdx !== -1 && composerIdx !== -1 && panelIdx < composerIdx
     }, 'panel shrink and composer restore')
     // With the editor focused, pi's frame ends show the hardware cursor.
     assert.ok(stdoutRef.value.includes('\x1b[?25h'), 'hardware cursor is shown while focused')
+    // The software blink must cycle on -> off -> on: only the 530ms timer
+    // can hide the cursor again after a focused frame showed it. Poll so a
+    // full half-second cycle has time to elapse.
+    await waitFor(() => {
+      const blinkOut = stdoutRef.value
+      const h1 = blinkOut.indexOf('\x1b[?25h')
+      const l1 = h1 === -1 ? -1 : blinkOut.indexOf('\x1b[?25l', h1)
+      const h2 = l1 === -1 ? -1 : blinkOut.indexOf('\x1b[?25h', l1)
+      return h1 !== -1 && l1 !== -1 && h2 !== -1
+    }, 'the software blink cycles on-off-on')
     child.stdin?.write('\u0003') // Ctrl+C
     const result = await done
     assert.equal(result.code, 0)
     assert.equal(result.restored, true)
-    // stop() re-applies DECSCUSR 0 after the alt-screen exit: the child's
-    // stdout through exit carries two writes (start + stop).
-    assert.ok((result.stdout.match(/\x1b\[0 q/g) ?? []).length >= 2, 'cursor style restored at stop')
+    // stop() re-applies the default DECSCUSR 0 after the alt-screen exit.
+    assert.ok((result.stdout.match(/\x1b\[0 q/g) ?? []).length >= 1, 'cursor style restored at stop')
+    // The software blink toggles the hardware cursor: more than one on-phase.
+    assert.ok((result.stdout.match(/\x1b\[\?25h/g) ?? []).length >= 2, 'cursor blink toggles')
   } finally {
     // A failed assertion must not strand the spawned CLI on the stub's
     // keep-alive connections (which would also wedge server.close()).

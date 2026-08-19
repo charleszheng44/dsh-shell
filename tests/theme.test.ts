@@ -7,7 +7,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { to256, composerBorderStyle, promptStyle, questionBoxBg, toolDisplayName, toolDotStyle, toolErrorBoxBg, toolOutputStyle, toolResultBoxBg, toolResultStyle, toolTitleStyle, userBubbleBg, userStyle } from '../src/theme.js'
+import { to256, composerBorderStyle, questionBoxBg, toolDisplayName, toolDotStyle, toolErrorBoxBg, toolOutputStyle, toolResultBoxBg, toolResultStyle, toolTitleStyle, userBubbleBg, userMarker, userStyle } from '../src/theme.js'
 
 test('theme resets are attribute-specific so box backgrounds survive', () => {
   // pi's Box wraps each padded row in the background style; a full \x1b[0m
@@ -24,9 +24,11 @@ test('theme resets are attribute-specific so box backgrounds survive', () => {
   assert.ok(user.startsWith('\x1b[38;') && user.endsWith('\x1b[39m'), user)
   const title = toolTitleStyle('x')
   assert.ok(title.includes('\x1b[39m') && title.endsWith('\x1b[22m'), title)
-  // The composer prompt is a foreground style with only its attribute reset.
-  const prompt = promptStyle('> ')
-  assert.ok(prompt.startsWith('\x1b[38;') && prompt.endsWith('\x1b[39m'), prompt)
+  // The composer prompt is the transcript's user marker: a foreground
+  // style with only its attribute reset.
+  const marker = userMarker()
+  assert.ok(marker.startsWith('\x1b[38;') && marker.endsWith('\x1b[39m'), marker)
+  assert.ok(marker.includes('\u276f'), 'the composer prefix is the ❯ chevron')
   // The tool result text is a NEUTRAL grey: equal RGB channels (truecolor)
   // or the 256-ramp step 249, so no channel can read greenish. The composer
   // border style is a foreground accent.
@@ -41,7 +43,7 @@ test('theme resets are attribute-specific so box backgrounds survive', () => {
   }
   assert.ok(composerBorderStyle('─').endsWith('\x1b[39m'), 'composer border is a foreground style')
   // No full reset may appear anywhere in a styled token.
-  for (const style of [userBubbleBg, promptStyle, toolOutputStyle, toolResultStyle, userStyle, toolTitleStyle]) {
+  for (const style of [userBubbleBg, toolOutputStyle, toolResultStyle, userStyle, toolTitleStyle]) {
     assert.ok(!style('x').includes('\x1b[0m'), 'style must not contain a full reset')
   }
 })

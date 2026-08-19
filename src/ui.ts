@@ -39,7 +39,6 @@ import {
   markdownTheme,
   pickerPanelStyle,
   pickerTitleStyle,
-  promptStyle,
   questionBoxBg,
   toolDisplayName,
   toolDotStyle,
@@ -464,8 +463,8 @@ export class TerminalView implements AppView {
   private readonly terminal = new ProcessTerminal()
   // pi hides the hardware cursor by default and renders a static fake block
   // instead; passing true shows the real cursor (positioned at the editor's
-  // marker every frame), which the DECSCUSR 0 write in start() makes blink —
-  // the Codex-style cursor.
+  // marker every frame). The blink is done in software (start() toggles the
+  // hardware cursor's visibility) so it works on every terminal.
   private readonly tui = new TuiAltScreen(this.terminal, true)
   private readonly transcript = new TranscriptList()
   private readonly partial = new Markdown('', 1, 0, markdownTheme)
@@ -510,7 +509,6 @@ export class TerminalView implements AppView {
     const footer = new VStack([
       // pi-style usage/context line; empty (zero rows) when unattached.
       { component: this.stats, basis: 'auto', grow: 0 },
-      { component: this.queue, basis: 'auto', grow: 0 },
       { component: this.hints, basis: 'auto', grow: 0 },
     ])
     const scroll = new ScrollView(this.transcript, {
@@ -530,7 +528,7 @@ export class TerminalView implements AppView {
     const editorRow = new VStack([
       new Rule(composerBorderStyle),
       new HStack([
-        { component: new Text(`\n${promptStyle('> ')}`, 0, 0), basis: 2, grow: 0 },
+        { component: new Text(`\n${userMarker()}`, 0, 0), basis: 2, grow: 0 },
         { component: this.editor, basis: 0, grow: 1 },
       ], { align: 'start' }),
       new Rule(composerBorderStyle),
@@ -540,6 +538,9 @@ export class TerminalView implements AppView {
       new VStack([
         { component: this.header, basis: 'auto', grow: 0, minSize: 1 },
         { component: scroll, basis: 0, grow: 1, minSize: 1 },
+        // The queue preview sits above the input box, right under the
+        // transcript (whose tail carries the Deep diving status line).
+        { component: this.queue, basis: 'auto', grow: 0 },
         { component: editorRow, basis: 'auto', grow: 0, minSize: 1 },
       ]),
     )
@@ -634,13 +635,28 @@ export class TerminalView implements AppView {
     // attached session enables input.
     this.tui.setFocus(null)
     this.tui.start()
-    // Codex-style cursor: DECSCUSR 0 is the blinking block. pi positions
-    // the hardware cursor but never styles it, so the blink is set here for
-    // the whole TUI session and restored on stop.
-    this.terminal.write('\x1b[0 q')
+    // Codex-style blinking cursor. Terminals that ignore the DECSCUSR
+    // style sequence (macOS Terminal) would keep a steady cursor, so the
+    // blink is done in software: a timer toggles the hardware cursor's
+    // visibility every half-second, flashing between the terminal's block
+    // and pi's hollow reverse-video cell. DECSCUSR 2 (steady block) keeps
+    // terminals that DO honor the sequence from double-blinking.
+    this.terminal.write('\x1b[2 q')
+    this.cursorBlinkTimer = setInterval(() => {
+      this.cursorVisible = !this.cursorVisible
+      this.tui.setShowHardwareCursor(this.cursorVisible)
+      this.tui.requestRender()
+    }, 530)
   }
 
   private editorEnabled = false
+
+  /** Software cursor blink: pi renders the editor's fake reverse-video cell
+   *  always, and the hardware cursor (when shown) covers it; toggling the
+   *  hardware cursor's visibility flashes between the two states on every
+   *  terminal, DECSCUSR support or not. */
+  private cursorBlinkTimer: ReturnType<typeof setInterval> | undefined
+  private cursorVisible = true
 
   /** Animation state for the Deep diving status: the dots cycle 0-3 on a
    *  timer so the line visibly "flashes" while the session is working. */
@@ -786,6 +802,10 @@ export class TerminalView implements AppView {
   }
 
   stop(): void {
+    if (this.cursorBlinkTimer !== undefined) {
+      clearInterval(this.cursorBlinkTimer)
+      this.cursorBlinkTimer = undefined
+    }
     if (this.workingTimer !== undefined) {
       clearInterval(this.workingTimer)
       this.workingTimer = undefined
