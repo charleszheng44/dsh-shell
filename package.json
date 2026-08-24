@@ -2,7 +2,23 @@
   "name": "dsh-shell",
   "version": "0.0.0",
   "private": true,
-  "description": "Thin terminal client for DeepSeek Harness",
+  "description": "A thin terminal companion for an already-running DeepSeek Harness host",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/charleszheng44/dsh-shell.git"
+  },
+  "homepage": "https://github.com/charleszheng44/dsh-shell#readme",
+  "bugs": {
+    "url": "https://github.com/charleszheng44/dsh-shell/issues"
+  },
+  "keywords": [
+    "deepseek",
+    "deepseek-harness",
+    "dsh",
+    "terminal",
+    "tui"
+  ],
   "type": "module",
   "bin": {
     "dsh-shell": "./dist/cli.js"
@@ -13,7 +29,8 @@
     "start": "node dist/cli.js",
     "typecheck": "tsc --noEmit",
     "check": "pnpm run typecheck && pnpm run test && pnpm run build",
-    "test": "node --import tsx --test \"tests/**/*.test.ts\""
+    "test": "node --import tsx --test \"tests/**/*.test.ts\"",
+    "test:coverage": "c8 --all --include \"src/**/*.ts\" --reporter=text --reporter=lcov node --import tsx --test \"tests/**/*.test.ts\""
   },
   "engines": {
     "node": "^22.19.0 || >=24.0.0"
@@ -28,6 +45,7 @@
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
+    "c8": "^12.0.0",
     "tsx": "^4.20.0",
     "typescript": "^5.9.0"
   }

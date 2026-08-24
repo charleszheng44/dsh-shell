@@ -1,53 +1,172 @@
+<div align="center">
+
 # dsh-shell
 
-A thin remote terminal shell client for DeepSeek Harness: attach to an
-already-running DSH host over its HTTP and WebSocket API, select a session,
-prompt it, answer its questions, and watch the queue, tool activity, and
-streaming replies.
+**Your DeepSeek Harness session, without leaving the terminal.**
 
-The visual language follows the Gentle Mist Blue (雾蓝) palette of the
-dsh-TUI reference client: warm off-white text, mist blues for brand and
-interaction, category-colored tool dots, pointer-in-bubble user prompts,
-and a pi-style usage footer. Three deliberate divergences from the
-reference remain: the assistant row marker, the Deep diving status line
-(the Web UI's shimmer stand-in), and the user bubble's padding — each
-is documented in the code.
+[![CI](https://github.com/charleszheng44/dsh-shell/actions/workflows/ci.yml/badge.svg)](https://github.com/charleszheng44/dsh-shell/actions/workflows/ci.yml)
+[![Coverage](https://codecov.io/gh/charleszheng44/dsh-shell/branch/main/graph/badge.svg)](https://codecov.io/gh/charleszheng44/dsh-shell)
+[![License: MIT](https://img.shields.io/badge/license-MIT-6b8cae.svg)](LICENSE)
+[![Node.js](https://img.shields.io/badge/node-%5E22.19%20%7C%7C%20%3E%3D24-5FA04E?logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 
-An independent terminal client for DeepSeek Harness.
+A small, keyboard-first terminal client that attaches to an already-running
+[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) host. The
+Web UI and `dsh-shell` can open the same session, see the same durable history,
+and follow the same live agent turn.
 
-## Status
+[Why dsh-shell?](#why-dsh-shell) · [Quick start](#quick-start) ·
+[Keyboard guide](#keyboard-guide) · [dsh-TUI comparison](#dsh-shell-or-dsh-tui)
 
-Terminal proxy: connect to a loopback DSH host, list workspaces (projects)
-and sessions, attach to a session by its DSH session ID, render recent
-finalized user/assistant history and live assistant output as Markdown
-(including fenced code blocks), and submit plain text to the attached
-session.
+</div>
 
-## Architecture
+## Why dsh-shell?
 
-One DSH host owns workspaces, sessions, agents, tools, persistence, queues,
-approvals, questions, and streaming events. `dsh-shell` connects as a client
-and renders those structured events with `@earendil-works/pi-tui`.
+DeepSeek Harness already has the hard parts: agents, tools, workspaces,
+sessions, persistence, queues, approvals, and a capable Web UI. Rebuilding
+those inside another terminal application would create a second owner for the
+same state.
 
-The terminal and Web UI attach to the same DSH session ID. They must connect
-to the same running DSH host; separate DSH processes must not coordinate by
-writing the same session database.
+`dsh-shell` takes a smaller approach. It is a remote view and input surface for
+the DSH host you already run:
+
+- start work in the Web UI and continue from a terminal;
+- watch one live session from both clients at once;
+- keep API keys, execution, policy, and session storage inside DSH;
+- get a focused terminal workflow without replacing the Web UI.
 
 ```text
-                 +-- Web UI
-DSH host --------+
-                 +-- dsh-shell
+                             same DSH session ID
+
+                       ┌─────────────────────────┐
+                       │        DSH host         │
+                       │ agents · tools · state  │
+                       └────────────┬────────────┘
+                                    │ HTTP + WebSocket
+                             ┌──────┴──────┐
+                             │             │
+                         Web UI       dsh-shell
 ```
 
-This repository owns:
+The DSH host remains the single source of truth. `dsh-shell` never opens the
+session database and never interprets subprocess output as a conversation
+protocol.
 
-- terminal input and lifecycle;
-- project and session selectors;
-- transcript and Markdown rendering;
-- client-side connection status.
+## What it can do
 
-It does not own agent execution, session persistence, prompt ordering, or
-interpretation of raw process output.
+- Browse DSH projects and sessions, or create new ones.
+- Replay finalized history and stream live Markdown responses.
+- Render reasoning, tool calls, tool results, token usage, and context pressure.
+- Send prompts while idle or queue follow-ups during a running turn.
+- Edit or steer the last queued message.
+- Answer agent questions and allow or reject tool approvals.
+- Switch model and reasoning effort without leaving the session.
+- Stop the active turn while preserving DSH's queued follow-ups.
+- Sanitize host-provided terminal control sequences and neutralize rendered
+  links before they reach the terminal.
+
+## Quick start
+
+### 1. Start a compatible DSH host
+
+`dsh-shell` currently tracks the `0.1.0-rc.7` DSH client API exactly. Start the
+matching Web host in the directory you want DSH to use:
+
+```sh
+pnpm dlx @deepseek-ai/dsh@0.1.0-rc.7 web --no-open
+```
+
+The host listens on `http://127.0.0.1:3080` by default. Configure your model
+and API key in the Web UI; `dsh-shell` does not read or store model credentials.
+
+### 2. Build and run dsh-shell
+
+In a second terminal:
+
+```sh
+git clone https://github.com/charleszheng44/dsh-shell.git
+cd dsh-shell
+corepack enable
+pnpm install --frozen-lockfile
+pnpm build
+pnpm start
+```
+
+To use a different loopback port:
+
+```sh
+pnpm start --host http://localhost:3081
+```
+
+Only loopback `http://` origins are accepted because the DSH host API does not
+provide authentication or TLS.
+
+### 3. Attach and talk
+
+On first launch, the project picker opens automatically.
+
+1. Choose a project, or choose **Create new project** and enter an existing
+   directory path.
+2. Choose a session, or choose **Create new session**.
+3. Type a message and press <kbd>Enter</kbd>.
+
+Your prompt appears after DSH records it. Open the same session in the Web UI
+at any time; both clients follow the same log and live event stream.
+
+## Keyboard guide
+
+| Key | Action |
+| --- | --- |
+| <kbd>Enter</kbd> | Send the composer text, or answer the open question |
+| <kbd>↑</kbd> / <kbd>↓</kbd> | Recall prompt history; move in a picker when one is open |
+| <kbd>Ctrl</kbd>+<kbd>P</kbd> | Choose or create a project |
+| <kbd>Ctrl</kbd>+<kbd>S</kbd> | Choose or create a session |
+| <kbd>Ctrl</kbd>+<kbd>O</kbd> | Choose a model and reasoning effort |
+| <kbd>Esc</kbd> | Cancel a picker, or stop the active turn |
+| <kbd>Ctrl</kbd>+<kbd>U</kbd> | Move the last queued message back into the composer |
+| <kbd>Ctrl</kbd>+<kbd>Y</kbd> | Steer the last queued message into the active turn |
+| <kbd>Ctrl</kbd>+<kbd>A</kbd> | Allow the pending tool approval once |
+| <kbd>Ctrl</kbd>+<kbd>R</kbd> | Reject the pending tool approval |
+| <kbd>Ctrl</kbd>+<kbd>C</kbd> | Quit and restore the terminal |
+
+When DSH asks a question, enter an option number, comma-separated numbers for
+a multi-select question, an exact option label, or a free-text answer.
+
+## dsh-shell or dsh-TUI?
+
+This comparison refers to the community
+[`dsh-TUI`](https://github.com/ccch1mneyyy/dsh-TUI) project. Both are good
+terminal interfaces for DeepSeek Harness, but they solve different problems.
+
+| | `dsh-shell` | `dsh-TUI` |
+| --- | --- | --- |
+| Architecture | Remote client over DSH's structured HTTP/WebSocket API | In-process DSH plugin bundle |
+| Best fit | You already run `dsh web` and want the same session in terminal and browser | You want a full terminal-first DSH application |
+| State | The existing DSH host owns all execution and persistence | The TUI is composed into the DSH process |
+| Scope | Projects, sessions, prompts, streaming, queue controls, questions, approvals, and model selection | Broader TUI features such as slash commands, file mentions, tool-card views, and plugin-integrated workflows |
+| Tradeoff | Smaller surface and a clear client/host boundary | Deeper integration and more terminal-native features |
+
+Choose `dsh-shell` when session continuity with the Web UI is the point. Choose
+`dsh-TUI` when the terminal should be the complete DSH experience.
+
+## Design boundaries
+
+This repository owns terminal rendering, keyboard input, selectors,
+connection state, and terminal cleanup. The DSH host owns agent execution,
+prompt ordering, approvals, questions, session persistence, and workspace
+state.
+
+Current limitations:
+
+- The DSH host must already be running and must match the pinned API version.
+- There is no automatic reconnect; restart `dsh-shell` after a stream loss.
+- Remote hosts, authentication, and TLS are intentionally unsupported.
+- Slash commands, attachments, session search, rename, archive, delete, and
+  fork remain Web UI workflows.
+- This repository is installed from source; it is not currently published as
+  a package.
+
+The detailed architecture and protocol decisions live in
+[`docs/spec/2026-08-17-thin-terminal-client.md`](docs/spec/2026-08-17-thin-terminal-client.md).
 
 ## Development
 
@@ -56,49 +175,16 @@ Requirements: Node.js `^22.19 || >=24` and pnpm 11.
 ```sh
 pnpm install
 pnpm dev
+pnpm test
+pnpm test:coverage
 pnpm check
-pnpm build
 ```
 
-Press `Ctrl+P` for the project selector, `Ctrl+S` for the session selector,
-`Enter` to send the editor's text to the attached session, `ESC` to stop the
-running turn (pending follow-ups resume in order), and `Ctrl+C` to leave the
-application. Both selectors end with a `＋ Create new` action:
-a project is created over an existing directory path (typed into the modal
-that follows), and a new session is created in the selected project and
-attached immediately. Submitted text appears in the transcript only after
-DSH logs it; a running session receives additional text through DSH's queue
-policy.
+`pnpm check` runs the type checker, complete test suite, and production build.
+Pull requests are welcome; keep the client thin, add focused tests for behavior
+changes, and leave DSH-owned state and execution in the host.
 
-## Limitations
+## License
 
-- Only loopback `http:` hosts are accepted (`--host`, default
-  `http://127.0.0.1:3080`); there is no authentication or TLS.
-- No workspace/session rename, archive, deletion, search, fork, or
-  attachment support.
-- No automatic reconnect: losing the stream shows a disconnected state and
-  requires a restart.
-- Slash commands are rejected locally with a Web UI instruction.
-- The client pins the exact published DSH network-client version; an
-  incompatible host fails loudly at `host.describe` before any selector
-  opens.
-
-## Validation recipe
-
-Keyless two-client smoke against DSH's mock LLM (from the deepseek-harness
-checkout):
-
-```sh
-# Terminal 1: mock LLM (pnpm's `--` passthrough would reach the script as a
-# positional argument, so invoke the script directly)
-node --import tsx packages/test-support/llm-mock-server/src/bin.ts --port 8000 \
-  --api-key mock-key --sequence slow_success --repeat-last \
-  --success-text $'```ts\nconst answer = 42\n```'
-# Terminal 2: DSH web host against the mock
-DEEPSEEK_BASE_URL=http://127.0.0.1:8000/v1 DEEPSEEK_API_KEY=mock-key pnpm dsh --profile web
-# Terminal 3: this TUI (no `--` separator: pnpm would pass it to the script)
-pnpm dev --host http://127.0.0.1:3080
-```
-
-Text entered in the TUI appears in the Web UI only after DSH logs it, and the
-assistant response streams into both clients.
+[MIT](LICENSE) © 2026 Charles Zheng. The Gentle Mist Blue palette and related
+visual references are acknowledged in [Third-party notices](THIRD_PARTY_NOTICES.md).
