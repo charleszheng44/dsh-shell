@@ -63,6 +63,29 @@ protocol.
 - Stop the active turn while preserving DSH's queued follow-ups.
 - Sanitize host-provided terminal control sequences and neutralize rendered
   links before they reach the terminal.
+- Report its pane state to [Herdr](https://herdr.dev) when launched inside a
+  Herdr pane, appearing there as the `deepseek` agent.
+
+## Herdr integration
+
+Inside a Herdr pane (`HERDR_ENV=1`) dsh-shell reports its own lifecycle state, so
+Herdr's sidebar shows what this pane is doing without guessing from the screen:
+
+| dsh-shell state | reported |
+| --- | --- |
+| attached, an approval or question is open | `blocked` (with a count in `--message`) |
+| attached, a turn is running | `working` |
+| attached and idle, or not attached | `idle` |
+
+Herdr derives `done` itself, so it is never reported. The label is `deepseek`
+because Herdr has no built-in kind for it — `herdr agent` lists `pi`, `claude`,
+`codex`, … but not `deepseek` — which is precisely why the agent reports itself
+over `herdr pane report-agent` instead of being screen-detected.
+
+Reporting is transition-driven (setState runs per streamed frame, so a spawn per
+frame would be absurd), every `herdr` invocation is fire-and-forget, and the
+whole module is a no-op outside Herdr: a missing or failing `herdr` binary
+cannot affect the shell.
 
 ## Quick start
 

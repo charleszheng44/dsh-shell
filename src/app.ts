@@ -20,6 +20,7 @@ import type {} from '@deepseek-ai/dsh-session-title/types'
 import type { ModelReasoning, MuxFrame, QueuedInboxItem, RpcId, SessionModels } from '@deepseek-ai/dsh-host-apiproxy/api'
 
 import type { DshPort, HostDescription } from './dsh.js'
+import { createHerdrReporter } from './herdr.js'
 import { applyEvent, projectEvents, type PartialAssistant, type TranscriptRow } from './transcript.js'
 
 /** Sentinel picker row: selecting it opens the create-project path input. */
@@ -347,6 +348,8 @@ export class App {
   private generation = 0
   private closed = false
   private pickerRequest = 0
+  /** Reports session state to Herdr; a no-op unless dsh-shell runs in a Herdr pane. */
+  private readonly herdr = createHerdrReporter()
 
   constructor(
     private readonly port: DshPort,
@@ -1353,6 +1356,7 @@ export class App {
   shutdown(): void {
     if (this.closed) return
     this.closed = true
+    this.herdr.release()
     this.view.stop()
   }
 
@@ -1363,6 +1367,9 @@ export class App {
 
   private setState(patch: Partial<AppState>): void {
     this.state = { ...this.state, ...patch }
+    // Reported before the render so a throwing view still leaves Herdr's view
+    // of this pane coherent; the reporter itself never throws.
+    this.herdr.sync(this.state)
     this.view.render(this.state)
   }
 }
