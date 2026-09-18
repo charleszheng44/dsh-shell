@@ -109,7 +109,13 @@ export function createHerdrReporter(deps: HerdrReporterDeps = {}): HerdrReporter
   const active = env.HERDR_ENV === '1' && pane !== '' && bin !== ''
 
   let last: HerdrState | undefined
-  let seq = 0
+  // Herdr discards a report whose `--seq` is not greater than the last one it
+  // saw from the same source, so the counter is seeded from the clock rather
+  // than starting at 1: a restarted client would otherwise look stale and every
+  // report it makes would be dropped, leaving the pane on the previous label and
+  // state forever. Herdr's own integrations seed it the same way (the opencode
+  // plugin uses `Date.now() * 1000`).
+  let seq = Date.now() * 1000
 
   return {
     sync(state) {

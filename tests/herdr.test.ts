@@ -87,9 +87,10 @@ test('a working turn reports once and repeats are suppressed', () => {
   for (let i = 0; i < 50; i += 1) reporter.sync(working)
 
   assert.equal(rec.calls.length, 1)
-  assert.deepEqual(argv(rec.calls, 0), [
-    'pane', 'report-agent', 'w1:p1', ...SOURCE, '--state', 'working', '--seq', '1',
+  assert.deepEqual(argv(rec.calls, 0).slice(0, 9), [
+    'pane', 'report-agent', 'w1:p1', ...SOURCE, '--state', 'working',
   ])
+  assert.ok(Number(flagValue(argv(rec.calls, 0), '--seq')) > 0)
 })
 
 test('transitions report in order with an increasing sequence', () => {
@@ -101,9 +102,37 @@ test('transitions report in order with an increasing sequence', () => {
   reporter.sync(attached({ turnActive: 1, pendingApprovals: [{}] })) // blocked
   reporter.sync(attached())                                   // idle again
 
-  assert.deepEqual(
-    rec.calls.map((args) => [args[args.indexOf('--state') + 1], args[args.indexOf('--seq') + 1]]),
-    [['idle', '1'], ['working', '2'], ['blocked', '3'], ['idle', '4']],
+  const reported = rec.calls.map((args) => [
+    args[args.indexOf('--state') + 1],
+    Number(args[args.indexOf('--seq') + 1]),
+  ])
+  assert.deepEqual(reported.map(([state]) => state), ['idle', 'working', 'blocked', 'idle'])
+  for (let i = 1; i < reported.length; i += 1) {
+    assert.ok(
+      (reported[i]?.[1] ?? 0) > (reported[i - 1]?.[1] ?? 0),
+      `seq must strictly increase: ${JSON.stringify(reported)}`,
+    )
+  }
+})
+
+test('a restarted reporter reports past the previous sequence', async () => {
+  // Herdr keeps the highest `--seq` it has seen per source, so a client that
+  // restarts and counts from 1 has every report dropped: the pane keeps the old
+  // label and state, and a changed label never appears.
+  const before = recorder()
+  createHerdrReporter({ env: IN_HERDR, spawn: before.spawn }).sync(attached({ turnActive: 1 }))
+  const firstSeq = Number(flagValue(argv(before.calls, 0), '--seq'))
+
+  // A restart takes far longer than the millisecond the clock seed resolves.
+  await new Promise((resolve) => setTimeout(resolve, 5))
+
+  const after = recorder()
+  createHerdrReporter({ env: IN_HERDR, spawn: after.spawn }).sync(attached({ turnActive: 1 }))
+  const restartedSeq = Number(flagValue(argv(after.calls, 0), '--seq'))
+
+  assert.ok(
+    restartedSeq > firstSeq,
+    `expected a restart to exceed ${firstSeq}, got ${restartedSeq}`,
   )
 })
 
