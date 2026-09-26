@@ -514,7 +514,9 @@ export class TerminalView implements AppView {
   // marker every frame). The blink is done in software (start() toggles the
   // hardware cursor's visibility) so it works on every terminal.
   private readonly terminal = new CursorFlashTerminal()
-  private readonly tui = new TuiAltScreen(this.terminal, true)
+  // pi defaults to one line per wheel event, which makes long conversations
+  // slow to browse. Keep its native mouse routing and scroll boundaries.
+  private readonly tui = new TuiAltScreen(this.terminal, true, undefined, { wheelScrollLines: 5 })
   private readonly transcript = new TranscriptList()
   private readonly partial = new Markdown('', 1, 0, markdownTheme)
   private readonly partialRow = new HStack([

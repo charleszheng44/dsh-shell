@@ -154,6 +154,9 @@ at any time; both clients follow the same log and live event stream.
 When DSH asks a question, enter an option number, comma-separated numbers for
 a multi-select question, an exact option label, or a free-text answer.
 
+The mouse wheel scrolls the conversation five lines per notch. Scroll back to
+the bottom to resume following new output.
+
 ## dsh-shell or dsh-TUI?
 
 This comparison refers to the community

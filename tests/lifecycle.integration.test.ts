@@ -268,7 +268,7 @@ test('a dropped mux stream shows Disconnected and Ctrl+C still restores once', a
  * session.updateQueue calls, and broadcasts a fresh snapshot after each
  * removal (the client's panel is authoritative from these snapshots).
  */
-function startQueueHost(): Promise<{
+function startQueueHost(options: { transcriptText?: string } = {}): Promise<{
   server: Server
   origin: string
   updateQueueCalls: Array<{ sessionId: string; itemId: string; action: unknown }>
@@ -375,7 +375,7 @@ function startQueueHost(): Promise<{
             { event: { type: 'user/message', seq: 1, time: 0, surfaceOp: 'append', data: { id: 'm1', role: 'user', content: [{ type: 'text', text: 'hello' }], source: { kind: 'user' } } } },
             { event: { type: 'assistant/message', seq: 2, time: 0, surfaceOp: 'append', data: { turn: 0, step: 0, message: { id: 'a1', role: 'assistant', content: [
               { type: 'reasoning', text: 'think about it' },
-              { type: 'text', text: 'ok' },
+              { type: 'text', text: options.transcriptText ?? 'ok' },
             ], source: { kind: 'model', provider: 'p' } } } } },
           ], hasMore: false }
           break
@@ -509,6 +509,62 @@ async function waitFor(predicate: () => boolean, label: string, timeoutMs = 5000
   }
   throw new Error(`condition never held: ${label}`)
 }
+
+test('mouse wheel scrolls five transcript lines in both directions without editing the draft', async () => {
+  const transcriptText = '```text\n'
+    + Array.from({ length: 100 }, (_, index) => `scroll-row-${String(index).padStart(3, '0')}`).join('\n')
+    + '\n```'
+  const { server, origin, promptCalls } = await startQueueHost({ transcriptText })
+  let child: ChildProcess | undefined
+  try {
+    const spawned = runCli(['--host', origin])
+    child = spawned.child
+    const stdoutRef = { value: '' }
+    child.stdout?.on('data', (chunk: Buffer) => { stdoutRef.value += chunk.toString() })
+    await waitForStdout(stdoutRef, 'Select project')
+    child.stdin?.write('\u001b[B\r')
+    await waitForStdout(stdoutRef, 'Select session')
+    child.stdin?.write('\r')
+    await waitForStdout(stdoutRef, 'scroll-row-099')
+    child.stdin?.write('keep this draft')
+    await waitForStdout(stdoutRef, 'keep this draft')
+
+    // Reconstruct the latest painted rows, including differential updates;
+    // old transcript rows in accumulated stdout must not satisfy the test.
+    const screenRows = (): string[] => {
+      const rows = new Map<number, string>()
+      for (const match of stdoutRef.value.matchAll(/\x1b\[(\d+);1H\x1b\[2K([\s\S]*?)(?=\x1b\[\d+;1H\x1b\[2K|$)/g)) {
+        rows.set(Number(match[1]), match[2] ?? '')
+      }
+      return [...rows.entries()].sort(([a], [b]) => a - b).map(([, text]) => text)
+    }
+    const firstVisible = (): number => {
+      const row = screenRows().find((text) => /scroll-row-\d{3}/.test(text))
+      return Number(row?.match(/scroll-row-(\d{3})/)?.[1] ?? -1)
+    }
+    const bottom = firstVisible()
+    assert.ok(bottom >= 10, 'enough history to measure wheel movement')
+    // SGR wheel up, then legacy X10 wheel up: both terminal protocols use
+    // the same five-line step. The pointer is inside the transcript.
+    child.stdin?.write('\x1b[<64;10;4M')
+    await waitFor(() => firstVisible() === bottom - 5, 'SGR wheel moves up five lines')
+    child.stdin?.write('\x1b[M' + String.fromCharCode(96, 42, 36))
+    await waitFor(() => firstVisible() === bottom - 10, 'X10 wheel moves up five lines')
+    child.stdin?.write('\x1b[<65;10;4M')
+    await waitFor(() => firstVisible() === bottom - 5, 'wheel moves down five lines')
+    child.stdin?.write('\x1b[<65;10;4M')
+    await waitFor(() => firstVisible() === bottom, 'wheel returns to the latest output')
+    assert.ok(screenRows().some((row) => row.includes('keep this draft')), 'draft remains intact')
+    assert.equal(promptCalls.length, 0, 'wheel input never submits a prompt')
+    child.stdin?.write('\u0003')
+    const result = await spawned.done
+    assert.equal(result.code, 0)
+    assert.equal(result.restored, true)
+  } finally {
+    child?.kill()
+    server.close()
+  }
+})
 
 test('Ctrl+U pops the last queued message into the composer end to end', async () => {
   const { server, origin, updateQueueCalls, respondBodies, selectModelCalls, promptCalls, muxSend } = await startQueueHost()
